@@ -2,10 +2,11 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #  
-#  $Id: PreFork.pm,v 1.28 2001/03/05 13:25:33 rhandom Exp $
+#  $Id: PreFork.pm,v 1.36 2001/03/13 08:06:44 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
+#                      http://seamons.com/
 #  
 #  This package may be distributed under the terms of either the
 #  GNU General Public License 
@@ -20,7 +21,6 @@ package Net::Server::PreFork;
 
 use strict;
 use vars qw($VERSION @ISA $LOCK_EX $LOCK_UN);
-use subs qw(tmpnam);
 use Net::Server;
 
 
@@ -44,7 +44,8 @@ sub options {
   $self->SUPER::options($ref);
 
   foreach ( qw(min_servers max_servers spare_servers max_requests
-               check_for_dead check_for_waiting lock_file) ){
+               check_for_dead check_for_waiting
+               lock_file serialize) ){
     $prop->{$_} = undef unless exists $prop->{$_};
     $ref->{$_} = \$prop->{$_};
   }
@@ -86,17 +87,55 @@ sub post_bind {
   ### do the parents
   $self->SUPER::post_bind;
 
-  ### I need a lock file if I am multi-port, I need to wait
-  ### until I am the final user though so I know I can access it
-  if( defined($prop->{multi_port}) ){
-    if( defined($prop->{lock_file}) ){
-      $prop->{lock_file_unlink} = undef;
-    }else{
-      require "POSIX.pm";
-      import POSIX qw(tmpnam);
-      $prop->{lock_file} = tmpnam;
-      $prop->{lock_file_unlink} = 1;
+  ### set up serialization
+  if( defined($prop->{multi_port}) 
+      || defined($prop->{serialize})
+      || $^O =~ /solaris/i ){
+
+    ### clean up method to use for serialization
+    if( !defined($prop->{serialize}) 
+        || $prop->{serialize} !~ /^(flock|semaphore|pipe)$/ ){
+      $prop->{serialize} = 'flock';
     }
+
+    ### set up lock file
+    if( $prop->{serialize} eq 'flock' ){
+      $self->log(3,"Setting up serialization via flock");
+      if( defined($prop->{lock_file}) ){
+        $prop->{lock_file_unlink} = undef;
+      }else{
+        require "POSIX.pm";
+        $prop->{lock_file} = POSIX::tmpnam();
+        $prop->{lock_file_unlink} = 1;
+      }
+
+    ### set up semaphore
+    }elsif( $prop->{serialize} eq 'semaphore' ){
+      $self->log(3,"Setting up serialization via semaphore");
+      require "IPC/SysV.pm";
+      require "IPC/Semaphore.pm";
+      my $s = IPC::Semaphore->new(IPC::SysV::IPC_PRIVATE(),
+                                  1,
+                                  IPC::SysV::S_IRWXU() | IPC::SysV::IPC_CREAT(),
+                                  ) || $self->fatal("Semaphore error [$!]");
+      $s->setall(1) || $self->fatal("Semaphore create error [$!]");
+      $prop->{sem} = $s;
+
+    ### set up pipe
+    }elsif( $prop->{serialize} eq 'pipe' ){
+      pipe( _WAITING, _READY );
+      _READY->autoflush(1);
+      _WAITING->autoflush(1);
+      $prop->{_READY}   = *_READY;
+      $prop->{_WAITING} = *_WAITING;
+      print _READY "First\n";
+
+    }else{
+      $self->fatal("Unknown serialization type \"$prop->{serialize}\"");
+    }
+
+  }else{
+    $prop->{serialize} = '';
   }
 
 }
@@ -115,7 +154,7 @@ sub loop {
   $prop->{_READ}  = *_READ;
   $prop->{_WRITE} = *_WRITE;
 
-  $self->log(2,"Beginning prefork ($prop->{min_servers} processes)\n");
+  $self->log(3,"Beginning prefork ($prop->{min_servers} processes)\n");
 
   ### start up the children
   $self->run_n_children( $prop->{min_servers} );
@@ -189,9 +228,6 @@ sub run_child {
   ### accept connections
   while( $self->accept() ){
     
-    ### remove the lock that occured during accept_multi_port
-    flock(LOCK,$LOCK_UN) if defined $prop->{multi_port};
-
     $prop->{connected} = 1;
     print _WRITE "$$ processing\n";
 
@@ -219,21 +255,47 @@ sub child_finish_hook {}
 
 ### We can only let one process do the selecting at a time
 ### this override makes sure that nobody else can do it
-### while we are.  We do this by opening a lock file
-### and getting an exclusive lock - this will block all others
-### until we release it (we do this after we have accepted on
-### the socket and begin processing the request)
-sub accept_multi_port {
+### while we are.  We do this either by opening a lock file
+### and getting an exclusive lock (this will block all others
+### until we release it) or by using semaphores to block
+sub accept {
   my $self = shift;
   my $prop = $self->{server};
-  
-  open(LOCK,">$prop->{lock_file}")
-    || $self->fatal("Couldn't open lock file \"$prop->{lock_file}\" [$!]");
 
-  flock(LOCK,$LOCK_EX)
-    || $self->fatal("Couldn't get lock on file \"$prop->{lock_file}\" [$!]");
+  ### serialize the child accepts
+  if( $prop->{serialize} eq 'flock' ){
+    open(LOCK,">$prop->{lock_file}")
+      || $self->fatal("Couldn't open lock file \"$prop->{lock_file}\" [$!]");
+    flock(LOCK,$LOCK_EX)
+      || $self->fatal("Couldn't get lock on file \"$prop->{lock_file}\" [$!]");
 
-  return $self->SUPER::accept_multi_port();
+  }elsif( $prop->{serialize} eq 'semaphore' ){
+    $prop->{sem}->op( 0, -1, IPC::SysV::SEM_UNDO() )
+      || $self->fatal("Semaphore Error [$!]");
+
+  }elsif( $prop->{serialize} eq 'pipe' ){
+    scalar <_WAITING>; # read one line - kernel says who gets it
+  }
+
+
+  ### now do the accept method
+  my $accept_val = $self->SUPER::accept();
+
+
+  ### unblock serialization
+  if( $prop->{serialize} eq 'flock' ){
+    flock(LOCK,$LOCK_UN);
+
+  }elsif( $prop->{serialize} eq 'semaphore' ){
+    $prop->{sem}->op( 0, 1, IPC::SysV::SEM_UNDO() )
+      || $self->fatal("Semaphore Error [$!]");
+
+  }elsif( $prop->{serialize} eq 'pipe' ){
+    print _READY "Next!\n";
+  }
+
+  ### return our success
+  return $accept_val;
 
 }
 
@@ -252,7 +314,7 @@ sub run_parent {
   my $self=shift;
   my $prop = $self->{server};
 
-  $self->log(2,"Parent ready for children\n");
+  $self->log(4,"Parent ready for children\n");
 
   my $last_checked_for_dead    = time;
   my $last_checked_for_waiting = time;
@@ -260,12 +322,12 @@ sub run_parent {
   *_READ = $prop->{_READ};
   _READ->autoflush(1);
 
-  $SIG{INT} = sub { $self->server_close; };
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub { $self->server_close; };
 
   while(<_READ>){
     my $time = time;
 
-    $self->log(5,"Child_status: $_");
+#    $self->log(4,"Child_status: $_");
 
     ### record what the child said
     next unless /^(\d+)\ +(.+)?/;
@@ -336,7 +398,7 @@ sub server_close {
   ### if a parent, fork off cleanup sub and close
   if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
 
-    $self->log(1,$self->log_time . " Server closing!!!");
+    $self->log(2,$self->log_time . " Server closing!!!");
     $self->close_children;
     exit;
 
@@ -359,7 +421,7 @@ sub close_children {
 
     my $pid = fork;
     if( not defined $pid ){
-      $self->log(1,"Can't fork to clean children [$!]");
+      $self->log(0,"Can't fork to clean children [$!]");
     }
     return if $pid;
 
@@ -429,16 +491,18 @@ In addition to the command line arguments of the Net::Server
 base class, Net::Server::PreFork contains several other 
 configurable parameters.
 
-  Key               Value            Default
-  min_servers       \d+              5
-  spare_servers     \d+              1
-  max_servers       \d+              10
-  max_requests      \d+              1000
+  Key               Value                   Default
+  min_servers       \d+                     5
+  spare_servers     \d+                     1
+  max_servers       \d+                     10
+  max_requests      \d+                     1000
 
-  lock_file         "filename"       POSIX::tmpnam
-
-  check_for_dead    \d+              30
-  check_for_waiting \d+              20
+  serialize         (flock|semaphore|pipe)  undef
+  # serialize defaults to flock on multi_port or on Solaris
+  lock_file         "filename"              POSIX::tmpnam
+                                            
+  check_for_dead    \d+                     30
+  check_for_waiting \d+                     20
 
 =over 4
 
@@ -459,12 +523,28 @@ The maximum number of child servers to start.
 The number of client connections to receive before a
 child terminates.
 
+=item serialize
+
+Determines whether the server serializes child connections.
+Options are undef, flock, semaphore, or pipe.  Default is undef.
+On multi_port servers or on servers running on Solaris, the
+default is flock.  The flock option uses blocking exclusive
+flock on the file specified in I<lock_file> (see below).
+The semaphore option uses IPC::Semaphore (thanks to Bennett
+Todd) for giving some sample code.  The pipe option reads on a 
+pipe to choose the next.  the flock option should be the
+most bulletproof while the pipe option should be the most
+portable.  (Flock is able to reliquish the block if the
+process dies between accept on the socket and reading
+of the client connection - semaphore and pipe do not)
+
 =item lock_file
 
-Filename to use in multi-port accept in order to flock
+Filename to use in flock serialized accept in order to
 serialize the accept sequece between the children.  This
-will default to a generated temporary filename.  This file
-will be removed when the server closes.
+will default to a generated temporary filename.  If default
+value is used the lock_file will be removed when the server
+closes.
 
 =item check_for_dead
 
@@ -577,6 +657,10 @@ See L<Net::Server>
 =head1 AUTHOR
 
 Paul T. Seamons paul@seamons.com
+
+=head1 THANKS
+
+See L<Net::Server>
 
 =head1 SEE ALSO
 

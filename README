@@ -23,6 +23,7 @@ FEATURES
      * Chroot ability after bind
      * Change of user and group after bind
      * Basic allow/deny access control
+     * Customized logging (choose Syslog, log_file, or STDERR)
      * Taint clean
      * Written in Perl
      * Protection against buffer overflow
@@ -56,7 +57,8 @@ DESCRIPTION
     the `Net::Server::PreFork' class borrows concepts of min_start_servers,
     max_servers, and min_waiting servers. `Net::Server::PreFork' also uses
     the concept of an flock serialized accept when accepting on multiple
-    ports.
+    ports (PreFork can choose between flock, IPC::Semaphore, and pipe to
+    control serialization).
 
 PERSONALITIES
     `Net::Server' is built around a common class (Net::Server) and is
@@ -96,8 +98,12 @@ PERSONALITIES
         to receive a client request, up to `max_servers'. Each of these
         children will process up to `max_requests' client connections. This
         type is good for a heavily hit site, and should scale well for most
-        applications. (Multi port accept is accomplished using flock to
-        serialize the children).
+        applications. Multi port accept is accomplished using either flock,
+        IPC::Semaphore, or pipe to serialize the children. Serialization may
+        also be switched on for single port in order to get around an OS
+        that does not allow multiple children to accept at the same time.
+        For a further discussion of serialization see the
+        Net::Server::PreFork manpage.
 
     Single
         All methods fall back to Net::Server. This personality is provided
@@ -108,7 +114,7 @@ PERSONALITIES
     allows for easy addition of new features, a separate development
     process, and reduced code bloat in the core module.
 
-SAMPLE
+SAMPLE CODE
     The following is a very simple server. The main functionality occurs in
     the process_request method call as shown below. Notice the use of
     timeouts to prevent Denial of Service while reading. (Other examples of
@@ -208,43 +214,69 @@ ARGUMENTS
     `Net::Server::Single' modules. (Other personalities may use additional
     parameters and may optionally not use parameters from the base class.)
 
-      Key               Value            Default
-      conf_file         "filename"       undef
+      Key               Value                    Default
+      conf_file         "filename"               undef
 
-      log_level         0-5              1
-      log_file          "filename"       undef
-      pid_file          "filename"       undef
+      log_level         0-4                      2
+      log_file          (filename|Sys::Syslog)   undef
+      pid_file          "filename"               undef
 
-      port              \d+              20203
-      host              "host"           "localhost"
-      proto             "proto"          "tcp"
-      listen            \d+              10
+      syslog_logsock    (unix|inet)              unix
+      syslog_ident      "identity"               "net_server"
+      syslog_logopt     (cons|ndelay|nowait|pid) pid
 
-      reverse_lookups   1                undef
-      allow             /regex/          none
-      deny              /regex/          none
+      port              \d+                      20203
+      host              "host"                   "localhost"
+      proto             "proto"                  "tcp"
+      listen            \d+                      10
 
-      chroot            "directory"      undef
-      user              (uid|username)   "nobody"
-      group             (gid|group)      "nobody"
-      background        1                undef
+      reverse_lookups   1                        undef
+      allow             /regex/                  none
+      deny              /regex/                  none
+
+      chroot            "directory"              undef
+      user              (uid|username)           "nobody"
+      group             (gid|group)              "nobody"
+      background        1                        undef  
 
     conf_file
         Filename from which to read additional key value pair arguments for
         starting the server. Default is undef.
 
     log_level
-        Ranges from 0 to 5 in level. Specifies what level of error will be
-        logged. "O" means logging is off. "5" means very verbose. These
-        levels should be able to correlate to syslog levels. Default is 1.
+        Ranges from 0 to 4 in level. Specifies what level of error will be
+        logged. "O" means logging is off. "4" means very verbose. These
+        levels should be able to correlate to syslog levels. Default is 2.
+        These levels correlate to syslog levels as defined by the following
+        key/value pairs: 0=>'err', 1=>'warning', 2=>'notice', 3=>'info',
+        4=>'debug'.
 
     log_file
         Name of log file to be written to. If no name is given and hook is
-        not overridden, log goes to STDERR. Default is undef.
+        not overridden, log goes to STDERR. Default is undef. If the magic
+        name "Sys::Syslog" is used, all logging will take place via the
+        Sys::Syslog module. If syslog is used the parameters
+        *syslog_logsock*, *syslog_ident*, and *syslog_logopt* may also be
+        defined.
 
     pid_file
         Filename to store pid of parent process. Generally applies only to
         forking servers. Default is none (undef).
+
+    syslog_logsock
+        Only available if *log_file* is equal to "Sys::Syslog". May be
+        either "unix" of "inet". Default is "unix". See the Sys::Syslog
+        manpage.
+
+    syslog_ident
+        Only available if *log_file* is equal to "Sys::Syslog". Id to
+        prepend on syslog entries. Default is "net_server". See the
+        Sys::Syslog manpage.
+
+    syslog_logopt
+        Only available if *log_file* is equal to "Sys::Syslog". May be
+        either zero or more of "pid","cons","ndelay","nowait". Default is
+        "pid". See the Sys::Syslog manpage.
 
     port
         Local port on which to bind. If low port, process must start as
@@ -349,6 +381,13 @@ CONFIGURATION FILE
       log_file    /var/log/server.log
       log_level   3
       pid_file    /tmp/server.pid
+
+      ### optional syslog directive
+      ### used in place of log_file above
+      #log_file       Sys::Syslog
+      #syslog_logsock unix
+      #syslog_ident   myserver
+      #syslog_logopt  pid|cons
 
       ### access control
       allow       .+\.(net|com)
@@ -483,10 +522,10 @@ HOOKS
     `$self->write_to_log_hook'
         This hook handles writing to log files. The default hook is to write
         to STDERR, or to the filename contained in the parameter `log_file'.
-        The arguments passed are a log level of 0 to 5 (5 being very
-        verbose), and a log line. If it is desired to use the syslog, a
-        customized hook may be put in place. (A future version may include
-        this as a configurable option).
+        The arguments passed are a log level of 0 to 4 (4 being very
+        verbose), and a log line. If log_file is equal to "Sys::Syslog",
+        then logging will go to Sys::Syslog and will bypass the
+        write_to_log_hook.
 
     `$self->fatal_hook'
         This hook occurs when the server has encountered an unrecoverable
@@ -526,9 +565,6 @@ TO DO
     More documentation
         Show more examples and explain process flow more.
 
-    Better Tests
-        Do better tests during "make test"
-
 FILES
       The following files are installed as part of this
       distribution.
@@ -544,9 +580,19 @@ AUTHOR
     Paul T. Seamons paul@seamons.com
 
 THANKS
-    Thanks to Rob Brown for help with miscellaneous concepts such as
-    tracking down the serialized select via flock ala Apache. Thanks to
-    Jonathan J. Miner for patching a blatant problem in the reverse lookups.
+    Thanks to Rob Brown <rbrown@about-inc.com> for help with miscellaneous
+    concepts such as tracking down the serialized select via flock ala
+    Apache and the reference to IO::Select making multiport servers
+    possible.
+
+    Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for patching a blatant
+    problem in the reverse lookups.
+
+    Thanks to Bennett Todd <Bennett.Todd@msdw.com> for pointing out a
+    problem in Solaris 2.5.1 which does not allow multiple children to
+    accept on the same port at the same time. Also for showing some sample
+    code from Viktor Duchovni which now represents the semaphore option of
+    the serialize argument in the PreFork server.
 
 SEE ALSO
     Please see also the Net::Server::Fork manpage, the Net::Server::INET
@@ -556,6 +602,7 @@ SEE ALSO
 COPYRIGHT
       Copyright (C) 2001, Paul T Seamons
                           paul@seamons.com
+                          http://seamons.com/
   
       This package may be distributed under the terms of either the
       GNU General Public License 

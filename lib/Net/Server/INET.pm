@@ -2,10 +2,11 @@
 #
 #  Net::Server::INET - Net::Server personality
 #  
-#  $Id: INET.pm,v 1.15 2001/03/02 05:59:30 rhandom Exp $
+#  $Id: INET.pm,v 1.16 2001/03/09 07:12:19 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
+#                      http://seamons.com/
 #  
 #  This package may be distributed under the terms of either the
 #  GNU General Public License 

@@ -2,10 +2,11 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #  
-#  $Id: Fork.pm,v 1.8 2001/03/05 13:19:58 rhandom Exp $
+#  $Id: Fork.pm,v 1.11 2001/03/13 08:07:16 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
+#                      http://seamons.com/
 #  
 #  This package may be distributed under the terms of either the
 #  GNU General Public License 
@@ -82,6 +83,10 @@ sub loop {
 
     }
 
+    ### be sure to allow shutdown of children
+    ### this must be done after the child is forked
+    $self->set_sigs;
+
     my $time = time;
 
     ### periodically see which children are alive
@@ -96,6 +101,13 @@ sub loop {
   }
 }
 
+### do a one time set up of some signals in the parent
+sub set_sigs {
+  my $self = shift;
+  return if defined $self->{server}->{sigs_set};
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub { $self->server_close; };
+  $self->{server}->{sigs_set} = 1;
+}
 
 ### routine to shut down the server (and all forked children)
 sub server_close {
@@ -105,7 +117,7 @@ sub server_close {
   ### if a parent, fork off cleanup sub and close
   if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
 
-    $self->log(1,$self->log_time . " Server closing!!!");
+    $self->log(2,$self->log_time . " Server closing!!!");
     $self->close_children;
     exit;
 

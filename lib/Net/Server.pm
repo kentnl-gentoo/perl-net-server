@@ -2,10 +2,11 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #  
-#  $Id: Server.pm,v 1.72 2001/03/08 14:02:23 rhandom Exp $
+#  $Id: Server.pm,v 1.82 2001/03/13 08:22:54 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
+#                      http://seamons.com/
 #  
 #  This package may be distributed under the terms of either the
 #  GNU General Public License 
@@ -14,17 +15,17 @@
 #
 #  All rights reserved.
 #  
+#  Please read the perldoc Net::Server
+#
 ################################################################
 
 package Net::Server;
 
 use strict;
-use vars qw($VERSION);
 use Socket qw( inet_aton inet_ntoa unpack_sockaddr_in AF_INET );
 use IO::Socket ();
 
-
-$VERSION = 0.47;
+$Net::Server::VERSION = '0.52';
 
 ### program flow
 sub run {
@@ -132,43 +133,57 @@ sub post_configure {
 
   ### set the log level
   if( !defined $prop->{log_level} || $prop->{log_level} !~ /^\d+$/ ){
-    $prop->{log_level} = 1;
+    $prop->{log_level} = 2;
   }
-  $prop->{log_level} = 5 if $prop->{log_level} > 5;
+  $prop->{log_level} = 4 if $prop->{log_level} > 4;
 
-  ### open a log file (any children will share the open connection)
-  if( defined $prop->{log_file} ){
+    
+  ### set up logging
+  if( ! defined($prop->{log_file}) ){
+    $prop->{log_file} = '';
+
+  ### log to syslog
+  }elsif( $prop->{log_file} eq 'Sys::Syslog' ){
+    
+    my $logsock = defined($prop->{syslog_logsock})
+      ? $prop->{syslog_logsock} : 'unix';
+    $prop->{syslog_logsock} = ($logsock =~ /^(unix|inet)$/)
+      ? $1 : 'unix';
+    
+    my $ident = defined($prop->{syslog_ident})
+      ? $prop->{syslog_ident} : 'net_server';
+    $prop->{syslog_ident} = ($ident =~ /^(\w+)$/)
+      ? $1 : 'net_server';
+    
+    my $opt = defined($prop->{syslog_logopt})
+      ? $prop->{syslog_logopt} : 'pid';
+    $prop->{syslog_logopt} = ($opt =~ /^((cons|ndelay|nowait|pid)($|\|))*/)
+      ? $1 : 'pid';
+
+    require "Sys/Syslog.pm";
+    Sys::Syslog::setlogsock($prop->{syslog_logsock}) || die "Syslog err [$!]";
+    Sys::Syslog::openlog(   $prop->{syslog_ident},
+                            $prop->{syslog_logopt},
+                            'daemon') || die "Couldn't open syslog [$!]";
+
+  ### open a logging file
+  }elsif( $prop->{log_file} ){
+
     die "Unsecure filename \"$prop->{log_file}\""
       unless $prop->{log_file} =~ m|^([\w\.\-/]+)$|;
     $prop->{log_file} = $1;
     open(_SERVER_LOG, ">>$prop->{log_file}")
       or die "Couldn't open log file \"$prop->{log_file}\" [$!].";
-  }
+    _SERVER_LOG->autoflush(1);
 
+  }
+  
   ### background the process
   if( defined $prop->{background} ){
     my $pid = fork;
     if( not defined $pid ){ $self->fatal("Couldn't fork [$!]"); }
     exit if $pid;
-    $self->log(2,"Process backgrounded");
-  }
-
-  ### allow for a pid file (must be done after backgrounding)
-  if( defined $prop->{pid_file} ){
-    $prop->{pid_file_unlink} = undef;
-    unless( $prop->{pid_file} =~ m|^([\w\.\-/]+)$| ){
-      $self->fatal("Unsecure filename \"$prop->{pid_file}\"");
-    }
-    $prop->{pid_file} = $1;
-    if( -e $prop->{pid_file} ){
-      $self->fatal("Pid file \"$prop->{pid_file}\" all ready exists.");
-    }elsif( open(PID, ">$prop->{pid_file}") ){
-      print PID $$;
-      close PID;
-      $prop->{pid_file_unlink} = 1;
-    }else{
-      $self->fatal("Couldn't open pid file \"$prop->{pid_file}\" [$!].");
-    }
+    $self->log(2,"Process Backgrounded");
   }
 
   ### make sure that allow and deny look like array refs
@@ -187,13 +202,13 @@ sub pre_bind {
   my $self = shift;
   my $prop = $self->{server};
 
-  $self->log(1,$self->log_time ." ". ref($self) ." starting!!!");
+  $self->log(2,$self->log_time ." ". ref($self) ." starting!!! pid($$)");
 
   ### set a default port
   if( ! defined( $prop->{port} )
       || ! ref( $prop->{port} )
       || ! @{ $prop->{port} } ){
-    $self->log(1,"Port Not Defined.  Defaulting to '20203'\n");
+    $self->log(2,"Port Not Defined.  Defaulting to '20203'\n");
     $prop->{port}  = [ 20203 ];
   }
 
@@ -231,7 +246,7 @@ sub bind {
   ### connect to any ports
   foreach (my($i)=0 ; $i<=$#{ $prop->{port} } ; $i++){
     my ($host,$port,$proto) = split(/:/, $prop->{port}->[$i]);
-    $self->log(1,"Binding to $proto port $port on host $host\n");
+    $self->log(2,"Binding to $proto port $port on host $host\n");
     $prop->{sock}->[$i] =
       IO::Socket::INET->new
         (LocalAddr => $host,
@@ -302,7 +317,29 @@ sub post_bind {
     if $prop->{user}  =~ /\D/;
   $< = $> = $prop->{user};
 
+  ### allow for a pid file (must be done after backgrounding)
+  if( defined $prop->{pid_file} ){
+    $prop->{pid_file_unlink} = undef;
+    unless( $prop->{pid_file} =~ m|^([\w\.\-/]+)$| ){
+      $self->fatal("Unsecure filename \"$prop->{pid_file}\"");
+    }
+    $prop->{pid_file} = $1;
+    if( -e $prop->{pid_file} ){
+      $self->fatal("Pid file \"$prop->{pid_file}\" all ready exists.");
+    }elsif( open(PID, ">$prop->{pid_file}") ){
+      print PID $$;
+      close PID;
+      $prop->{pid_file_unlink} = 1;
+    }else{
+      $self->fatal("Couldn't open pid file \"$prop->{pid_file}\" [$!].");
+    }
+  }
+
+  ### record number of request
   $prop->{requests} = 0;
+
+  ### catch sighup
+  $SIG{HUP} = sub { $self->sig_hup; }
 
 }
 
@@ -509,8 +546,12 @@ sub process_request {
       s/\r?\n$//;
       
       print ref($self),":$$: You said \"$_\"\r\n";
-      $self->log(5,$_); # very verbose log
+      $self->log(4,$_); # very verbose log
       
+      if( /get (\w+)/ ){
+        print "$1: $self->{server}->{$1}\r\n";
+      }
+
       if( /dump/ ){
         require "Data/Dumper.pm";
         print Data::Dumper::Dumper( $self );
@@ -570,6 +611,14 @@ sub server_close{
   exit;
 }
 
+
+### handle sighup - for now, just close the server
+### eventually this should re-exec
+sub sig_hup {
+  my $self = shift;
+  $self->fatal("Sig HUP not implemented");
+}
+
 ###----------------------------------------------------------###
 
 ### what to do when all else fails
@@ -591,15 +640,28 @@ sub fatal_hook {}
 
 ###----------------------------------------------------------###
 
+### how internal levels map to syslog levels
+$Net::Server::syslog_map = {0 => 'err',
+                            1 => 'warning',
+                            2 => 'notice',
+                            3 => 'info',
+                            4 => 'debug'};
+
 ### record output
 sub log {
   my $self  = shift;
   my $prop = $self->{server};
   my $level = shift;
+
   return unless $prop->{log_level};
   return unless $level <= $prop->{log_level};
 
-  warn "$_[0]\n" if ! $level and defined $prop->{log_file};
+  ### log only to syslog if setup to do syslog
+  if( $prop->{log_file} eq 'Sys::Syslog' ){
+    $level = $level!~/^\d+$/ ? $level : $Net::Server::syslog_map->{$level} ;
+    Sys::Syslog::syslog($level,@_);
+    return;
+  }
 
   $self->write_to_log_hook($level,@_);
 }
@@ -614,8 +676,8 @@ sub write_to_log_hook {
   local $_  = shift || '';
   chomp;
   s/([^\n\ -\~])/sprintf("%%%02X",ord($1))/eg;
-
-  if( defined $prop->{log_file} ){
+  
+  if( $prop->{log_file} ){
     print _SERVER_LOG $_, "\n";
   }else{
     my $old = select(STDERR);
@@ -649,8 +711,8 @@ sub options {
   foreach ( qw(conf_file
                user group chroot log_level
                log_file pid_file background
-               host proto listen reverse_lookups) ){
-    $prop->{$_} = undef unless exists $prop->{$_};
+               host proto listen reverse_lookups
+               syslog_logsock syslog_ident syslog_logopt) ){
     $ref->{$_} = \$prop->{$_};
   }
 
@@ -758,6 +820,7 @@ Net::Server - Extensible, general Perl server engine
  * Chroot ability after bind
  * Change of user and group after bind
  * Basic allow/deny access control
+ * Customized logging (choose Syslog, log_file, or STDERR)
  * Taint clean
  * Written in Perl
  * Protection against buffer overflow
@@ -797,7 +860,9 @@ the base C<Net::Server> class.  In addition the
 C<Net::Server::PreFork> class borrows concepts of
 min_start_servers, max_servers, and min_waiting servers.
 C<Net::Server::PreFork> also uses the concept of an flock
-serialized accept when accepting on multiple ports.
+serialized accept when accepting on multiple ports (PreFork
+can choose between flock, IPC::Semaphore, and pipe to control
+serialization).
 
 =head1 PERSONALITIES
 
@@ -848,8 +913,12 @@ C<spare_servers> available to receive a client request, up
 to C<max_servers>.  Each of these children will process up
 to C<max_requests> client connections.  This type is good
 for a heavily hit site, and should scale well for most
-applications.  (Multi port accept is accomplished using
-flock to serialize the children).
+applications.  Multi port accept is accomplished using
+either flock, IPC::Semaphore, or pipe to serialize the
+children.  Serialization may also be switched on for single
+port in order to get around an OS that does not allow multiple
+children to accept at the same time.  For a further 
+discussion of serialization see L<Net::Server::PreFork>.
 
 =item Single
 
@@ -864,7 +933,7 @@ open architecture allows for easy addition of new features,
 a separate development process, and reduced code bloat in
 the core module.
 
-=head1 SAMPLE
+=head1 SAMPLE CODE
 
 The following is a very simple server.  The main
 functionality occurs in the process_request method call as
@@ -972,26 +1041,30 @@ C<Net::Server::Single> modules.  (Other personalities may
 use additional parameters and may optionally not use
 parameters from the base class.)
 
-  Key               Value            Default
-  conf_file         "filename"       undef
+  Key               Value                    Default
+  conf_file         "filename"               undef
 
-  log_level         0-5              1
-  log_file          "filename"       undef
-  pid_file          "filename"       undef
+  log_level         0-4                      2
+  log_file          (filename|Sys::Syslog)   undef
+  pid_file          "filename"               undef
 
-  port              \d+              20203
-  host              "host"           "localhost"
-  proto             "proto"          "tcp"
-  listen            \d+              10
+  syslog_logsock    (unix|inet)              unix
+  syslog_ident      "identity"               "net_server"
+  syslog_logopt     (cons|ndelay|nowait|pid) pid
 
-  reverse_lookups   1                undef
-  allow             /regex/          none
-  deny              /regex/          none
+  port              \d+                      20203
+  host              "host"                   "localhost"
+  proto             "proto"                  "tcp"
+  listen            \d+                      10
 
-  chroot            "directory"      undef
-  user              (uid|username)   "nobody"
-  group             (gid|group)      "nobody"
-  background        1                undef
+  reverse_lookups   1                        undef
+  allow             /regex/                  none
+  deny              /regex/                  none
+
+  chroot            "directory"              undef
+  user              (uid|username)           "nobody"
+  group             (gid|group)              "nobody"
+  background        1                        undef  
 
 =over 4
 
@@ -1002,20 +1075,44 @@ for starting the server.  Default is undef.
 
 =item log_level
 
-Ranges from 0 to 5 in level.  Specifies what level of error
-will be logged.  "O" means logging is off.  "5" means very
+Ranges from 0 to 4 in level.  Specifies what level of error
+will be logged.  "O" means logging is off.  "4" means very
 verbose.  These levels should be able to correlate to syslog
-levels.  Default is 1.
+levels.  Default is 2.  These levels correlate to syslog levels
+as defined by the following key/value pairs: 0=>'err', 
+1=>'warning', 2=>'notice', 3=>'info', 4=>'debug'.
 
 =item log_file
 
 Name of log file to be written to.  If no name is given and 
 hook is not overridden, log goes to STDERR.  Default is undef.
+If the magic name "Sys::Syslog" is used, all logging will
+take place via the Sys::Syslog module.  If syslog is used
+the parameters I<syslog_logsock>, I<syslog_ident>, and
+I<syslog_logopt> may also be defined.
 
 =item pid_file
 
 Filename to store pid of parent process.  Generally applies
 only to forking servers.  Default is none (undef).
+
+=item syslog_logsock
+
+Only available if I<log_file> is equal to "Sys::Syslog".  May
+be either "unix" of "inet".  Default is "unix".  
+See L<Sys::Syslog>.
+
+=item syslog_ident
+
+Only available if I<log_file> is equal to "Sys::Syslog".  Id 
+to prepend on syslog entries.  Default is "net_server".
+See L<Sys::Syslog>.
+
+=item syslog_logopt
+
+Only available if I<log_file> is equal to "Sys::Syslog".  May
+be either zero or more of "pid","cons","ndelay","nowait".  
+Default is "pid".  See L<Sys::Syslog>.
 
 =item port
 
@@ -1144,6 +1241,13 @@ ignored.
   log_file    /var/log/server.log
   log_level   3
   pid_file    /tmp/server.pid
+
+  ### optional syslog directive
+  ### used in place of log_file above
+  #log_file       Sys::Syslog
+  #syslog_logsock unix
+  #syslog_ident   myserver
+  #syslog_logopt  pid|cons
 
   ### access control
   allow       .+\.(net|com)
@@ -1301,10 +1405,9 @@ This hook occurs before the server begins shutting down.
 This hook handles writing to log files.  The default hook
 is to write to STDERR, or to the filename contained in
 the parameter C<log_file>.  The arguments passed are a
-log level of 0 to 5 (5 being very verbose), and a log line.
-If it is desired to use the syslog, a customized hook may
-be put in place.  (A future version may include this as
-a configurable option).
+log level of 0 to 4 (4 being very verbose), and a log line.
+If log_file is equal to "Sys::Syslog", then logging will
+go to Sys::Syslog and will bypass the write_to_log_hook.
 
 =item C<$self-E<gt>fatal_hook>
 
@@ -1358,10 +1461,6 @@ servers to user Net::Server as a base layer.
 
 Show more examples and explain process flow more.
 
-=item Better Tests
-
-Do better tests during "make test"
-
 =back
 
 =head1 FILES
@@ -1382,10 +1481,20 @@ Paul T. Seamons paul@seamons.com
 
 =head1 THANKS
 
-Thanks to Rob Brown for help with miscellaneous concepts
-such as tracking down the serialized select via flock ala
-Apache.  Thanks to Jonathan J. Miner for patching a blatant
-problem in the reverse lookups.
+Thanks to Rob Brown <rbrown@about-inc.com> for help with
+miscellaneous concepts such as tracking down the
+serialized select via flock ala Apache and the reference
+to IO::Select making multiport servers possible.  
+
+Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for
+patching a blatant problem in the reverse lookups.
+
+Thanks to Bennett Todd <Bennett.Todd@msdw.com> for
+pointing out a problem in Solaris 2.5.1 which does not 
+allow multiple children to accept on the same port at
+the same time.  Also for showing some sample code
+from Viktor Duchovni which now represents the semaphore
+option of the serialize argument in the PreFork server.
 
 =head1 SEE ALSO
 
@@ -1400,6 +1509,7 @@ L<Net::Server::Single>
 
   Copyright (C) 2001, Paul T Seamons
                       paul@seamons.com
+                      http://seamons.com/
   
   This package may be distributed under the terms of either the
   GNU General Public License 

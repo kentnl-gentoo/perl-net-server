@@ -2,10 +2,11 @@
 #
 #  Net::Server::Single - Net::Server personality
 #  
-#  $Id: Single.pm,v 1.4 2001/03/02 05:59:30 rhandom Exp $
+#  $Id: Single.pm,v 1.5 2001/03/09 07:12:36 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
+#                      http://seamons.com/
 #  
 #  This package may be distributed under the terms of either the
 #  GNU General Public License 

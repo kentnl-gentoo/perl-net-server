@@ -2,10 +2,11 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.12 2001/03/02 05:59:30 rhandom Exp $
+#  $Id: MultiType.pm,v 1.13 2001/03/09 07:11:41 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
+#                      http://seamons.com/
 #  
 #  This package may be distributed under the terms of either the
 #  GNU General Public License 

@@ -1,6 +1,43 @@
 Revision history for Perl extension Net::Server.
 
-0.47  Mar 05 07:37 2001
+0.51  Mar 13 01:16 2001
+        - Added syslog ability.
+                This allows for logging to syslog instead
+                of STDERR or a log file.  Logging still
+                takes place via $self->log() but is configurable
+                at startup.
+        - Standardized existing log numbers to match syslog levels.
+
+0.51  Mar 10 16:35 2001
+        - Added piped serialization option.
+                This allows for serialization to be done on
+                a wider range of machines.  Flock is more
+                bulletproof, but pipe is more portable.
+                See the Net::Server::PreFork manpage.
+
+0.50  Mar 10 10:06 2001
+        - Added serialize option to PreFork.
+                This allows for serialization to be turned on
+                even on non_multi port process - this is
+                done to get around some OS's which don't 
+                allow children to accept on the same socket
+                at the same time.
+        - Added semaphore type to the serialize option
+                This type uses IPC::Semaphore instead of flock
+                to serialize the child accept sequence.
+                Thanks to Bennett Todd for sample code.
+
+0.48  Mar 08 23:57 2001
+        - Catch $SIG{INT}, $SIG{TERM} and $SIG{QUIT} in PreFork and Fork.
+                This allows parent to shutdown children properly.
+        - Catch $SIG{HUP} (currently shuts down server, needs to
+                be able to restart server re-reading conf file)
+        - Changed pid_file creation to after chroot, change of group
+                and change of user - making sure the server has 
+                permission to write out the pid file.
+        - Remove use of "use subs" in PreFork.
+
+0.47  Mar 08 07:03 2001
         - Fix reverse lookup bug - thanks to Jonathan J. Miner for 
                 pointing out the missing pieces.
         - Cleaned up pod examples
