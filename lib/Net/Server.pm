@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #  
-#  $Id: Server.pm,v 1.82 2001/03/13 08:22:54 rhandom Exp $
+#  $Id: Server.pm,v 1.90 2001/03/20 06:42:08 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -25,7 +25,7 @@ use strict;
 use Socket qw( inet_aton inet_ntoa unpack_sockaddr_in AF_INET );
 use IO::Socket ();
 
-$Net::Server::VERSION = '0.52';
+$Net::Server::VERSION = '0.55';
 
 ### program flow
 sub run {
@@ -35,6 +35,10 @@ sub run {
 
   ### need a place to store properties
   $self->{server} = {} unless defined($self->{server}) && ref($self->{server});
+
+  ### save for a HUP
+  $self->{server}->{commandline} = [ $0, @ARGV ]
+    unless defined $self->{server}->{commandline};
 
   $self->configure_hook;      # user customizable hook
 
@@ -138,7 +142,7 @@ sub post_configure {
   $prop->{log_level} = 4 if $prop->{log_level} > 4;
 
     
-  ### set up logging
+  ### log to STDERR
   if( ! defined($prop->{log_file}) ){
     $prop->{log_file} = '';
 
@@ -160,11 +164,17 @@ sub post_configure {
     $prop->{syslog_logopt} = ($opt =~ /^((cons|ndelay|nowait|pid)($|\|))*/)
       ? $1 : 'pid';
 
+    my $fac = defined($prop->{syslog_facility})
+      ? $prop->{syslog_facility} : 'daemon';
+    $prop->{syslog_facility} = ($fac =~ /^((\w+)($|\|))*/)
+      ? $1 : 'daemon';
+
     require "Sys/Syslog.pm";
     Sys::Syslog::setlogsock($prop->{syslog_logsock}) || die "Syslog err [$!]";
     Sys::Syslog::openlog(   $prop->{syslog_ident},
                             $prop->{syslog_logopt},
-                            'daemon') || die "Couldn't open syslog [$!]";
+                            $prop->{syslog_facility},
+                            ) || die "Couldn't open syslog [$!]";
 
   ### open a logging file
   }elsif( $prop->{log_file} ){
@@ -179,11 +189,17 @@ sub post_configure {
   }
   
   ### background the process
-  if( defined $prop->{background} ){
+  if( defined($prop->{background}) || defined($prop->{setsid}) ){
     my $pid = fork;
     if( not defined $pid ){ $self->fatal("Couldn't fork [$!]"); }
     exit if $pid;
     $self->log(2,"Process Backgrounded");
+  }
+
+  ### completely remove myself from parent process
+  if( defined($prop->{setsid}) ){
+    require "POSIX.pm";
+    POSIX::setsid();
   }
 
   ### make sure that allow and deny look like array refs
@@ -204,7 +220,7 @@ sub pre_bind {
 
   $self->log(2,$self->log_time ." ". ref($self) ." starting!!! pid($$)");
 
-  ### set a default port
+  ### set a default port, host, and proto
   if( ! defined( $prop->{port} )
       || ! ref( $prop->{port} )
       || ! @{ $prop->{port} } ){
@@ -212,17 +228,25 @@ sub pre_bind {
     $prop->{port}  = [ 20203 ];
   }
 
+  $prop->{host} = '*' unless defined($prop->{host});
+  $prop->{host} = ($prop->{host}=~/^([\w\.\-\*\/]+)$/)
+    ? $1 : $self->fatal("Unsecure host \"$prop->{host}\"");
+
+  $prop->{proto} = 'tcp' unless defined($prop->{proto});
+  $prop->{proto} = ($prop->{proto}=~/^(\w+)$/)
+    ? $1 : $self->fatal("Unsecure proto \"$prop->{host}\"");
+
   ### loop through the passed ports
   ### set up parallel arrays of hosts, ports, and protos
   foreach (@{ $prop->{port} }){
-    if( m|^([\w\.\-\/]+):(\w+)/(\w+)$| ){
+    if( m|^([\w\.\-\*\/]+):(\w+)/(\w+)$| ){
       $_ = "$1:$2:$3";
-    }elsif( /^([\w\.\-]+):(\w+)$/ ){
-      my $proto = defined $prop->{proto} ? $prop->{proto} : 'tcp';
+    }elsif( /^([\w\.\-\*\/]+):(\w+)$/ ){
+      my $proto = $prop->{proto};
       $_ = "$1:$2:$proto";
     }elsif( /^(\w+)$/ ){
-      my $host  = defined $prop->{host}  ? $prop->{host}  : 'localhost';
-      my $proto = defined $prop->{proto} ? $prop->{proto} : 'tcp';
+      my $host  = $prop->{host};
+      my $proto = $prop->{proto};
       $_ = "$host:$1:$proto";
     }else{
       $self->fatal("Undeterminate port \"$_\"");
@@ -247,14 +271,14 @@ sub bind {
   foreach (my($i)=0 ; $i<=$#{ $prop->{port} } ; $i++){
     my ($host,$port,$proto) = split(/:/, $prop->{port}->[$i]);
     $self->log(2,"Binding to $proto port $port on host $host\n");
-    $prop->{sock}->[$i] =
-      IO::Socket::INET->new
-        (LocalAddr => $host,
-         LocalPort => $port,
-         Proto     => $proto,
-         Listen    => $prop->{listen},
-         Reuse     => 1,
-         )
+
+    my %args = (LocalPort => $port,
+                Proto     => $proto,
+                Listen    => $prop->{listen},
+                Reuse     => 1,);
+    $args{LocalAddr} = $host if $host !~ /\*/;
+
+    $prop->{sock}->[$i] = IO::Socket::INET->new( %args )
           or $self->fatal("Can't connect to $proto port $port on $host [$!]");
 
     $self->fatal("Back sock [$i]!")
@@ -324,9 +348,9 @@ sub post_bind {
       $self->fatal("Unsecure filename \"$prop->{pid_file}\"");
     }
     $prop->{pid_file} = $1;
-    if( -e $prop->{pid_file} ){
-      $self->fatal("Pid file \"$prop->{pid_file}\" all ready exists.");
-    }elsif( open(PID, ">$prop->{pid_file}") ){
+    $self->log(1,"pid_file \"$prop->{pid_file}\" already exists.  Overwriting.")
+      if -e $prop->{pid_file};
+    if( open(PID, ">$prop->{pid_file}") ){
       print PID $$;
       close PID;
       $prop->{pid_file_unlink} = 1;
@@ -337,6 +361,9 @@ sub post_bind {
 
   ### record number of request
   $prop->{requests} = 0;
+
+  ### set some sigs
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub { $self->server_close; };
 
   ### catch sighup
   $SIG{HUP} = sub { $self->sig_hup; }
@@ -710,9 +737,10 @@ sub options {
 
   foreach ( qw(conf_file
                user group chroot log_level
-               log_file pid_file background
+               log_file pid_file background setsid
                host proto listen reverse_lookups
-               syslog_logsock syslog_ident syslog_logopt) ){
+               syslog_logsock syslog_ident
+               syslog_logopt syslog_facility) ){
     $ref->{$_} = \$prop->{$_};
   }
 
@@ -798,6 +826,7 @@ Net::Server - Extensible, general Perl server engine
 
 =head1 SYNOPSIS
 
+  #!/usr/bin/perl -w -T
   package MyPackage;
 
   use Net::Server;
@@ -808,6 +837,11 @@ Net::Server - Extensible, general Perl server engine
   }
 
   MyPackage->run();
+  exit;
+
+=head1 OBTAINING
+
+Visit http://seamons.com/ for the latest version.
 
 =head1 FEATURES
 
@@ -1022,7 +1056,7 @@ a prebuilt object can best be shown in the following code:
   $server->run();
   #--------------- file test.pl ---------------
 
-All four methods for passing arguments may be used at the
+All five methods for passing arguments may be used at the
 same time.  Once an argument has been set, it is not over
 written if another method passes the same argument.  C<Net::Server>
 will look for arguments in the following order: 
@@ -1031,6 +1065,7 @@ will look for arguments in the following order:
   2) Arguments passed on command line.
   3) Arguments passed to the run method.
   4) Arguments passed via a conf file.
+  5) Arguments set in the configure_hook.
 
 Key/value pairs used by the server are removed by the
 configuration process so that server layers on top of
@@ -1051,9 +1086,10 @@ parameters from the base class.)
   syslog_logsock    (unix|inet)              unix
   syslog_ident      "identity"               "net_server"
   syslog_logopt     (cons|ndelay|nowait|pid) pid
+  syslog_facility   \w+                      daemon
 
   port              \d+                      20203
-  host              "host"                   "localhost"
+  host              "host"                   "*"
   proto             "proto"                  "tcp"
   listen            \d+                      10
 
@@ -1064,7 +1100,8 @@ parameters from the base class.)
   chroot            "directory"              undef
   user              (uid|username)           "nobody"
   group             (gid|group)              "nobody"
-  background        1                        undef  
+  background        1                        undef
+  setsid            1                        undef
 
 =over 4
 
@@ -1088,8 +1125,8 @@ Name of log file to be written to.  If no name is given and
 hook is not overridden, log goes to STDERR.  Default is undef.
 If the magic name "Sys::Syslog" is used, all logging will
 take place via the Sys::Syslog module.  If syslog is used
-the parameters I<syslog_logsock>, I<syslog_ident>, and
-I<syslog_logopt> may also be defined.
+the parameters C<syslog_logsock>, C<syslog_ident>, and
+C<syslog_logopt>,and C<syslog_facility> may also be defined.
 
 =item pid_file
 
@@ -1098,21 +1135,26 @@ only to forking servers.  Default is none (undef).
 
 =item syslog_logsock
 
-Only available if I<log_file> is equal to "Sys::Syslog".  May
+Only available if C<log_file> is equal to "Sys::Syslog".  May
 be either "unix" of "inet".  Default is "unix".  
 See L<Sys::Syslog>.
 
 =item syslog_ident
 
-Only available if I<log_file> is equal to "Sys::Syslog".  Id 
+Only available if C<log_file> is equal to "Sys::Syslog".  Id 
 to prepend on syslog entries.  Default is "net_server".
 See L<Sys::Syslog>.
 
 =item syslog_logopt
 
-Only available if I<log_file> is equal to "Sys::Syslog".  May
+Only available if C<log_file> is equal to "Sys::Syslog".  May
 be either zero or more of "pid","cons","ndelay","nowait".  
 Default is "pid".  See L<Sys::Syslog>.
+
+=item syslog_facility
+
+Only available if C<log_file> is equal to "Sys::Syslog".
+See L<Sys::Syslog> and L<syslog>.  Default is "daemon".
 
 =item port
 
@@ -1127,12 +1169,14 @@ If the protocol is not specified, I<proto> will default to the
 C<proto> specified in the arguments.  If C<proto> is not specified
 there it will default to "tcp".  If I<host> is not specified, 
 I<host> will default to C<host> specified in the arguments.  If 
-C<host> is not specified there it will default to "localhost".
+C<host> is not specified there it will default to "*".
 Default port is 20203.
 
 =item host
 
-Local host or addr upon which to bind port.  See L<IO::Socket>.
+Local host or addr upon which to bind port.  If a value of '*' is
+given, the server will bind that port on all available addresses
+on the box.  See L<IO::Socket>.
 
 =item proto
 
@@ -1181,6 +1225,14 @@ equal to "root".
 
 Specifies whether or not the server should fork after the
 bind method to release itself from the command line.
+Defaults to undef.  Process will also background if
+C<setsid> is set.
+
+=item setsid
+
+Specifies whether or not the server should fork after the
+bind method to release itself from the command line and then
+run the C<POSIX::setsid()> command to truly daemonize.
 Defaults to undef.
 
 =back
@@ -1489,7 +1541,7 @@ to IO::Select making multiport servers possible.
 Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for
 patching a blatant problem in the reverse lookups.
 
-Thanks to Bennett Todd <Bennett.Todd@msdw.com> for
+Thanks to Bennett Todd <bet@rahul.net> for
 pointing out a problem in Solaris 2.5.1 which does not 
 allow multiple children to accept on the same port at
 the same time.  Also for showing some sample code

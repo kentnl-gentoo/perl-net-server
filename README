@@ -2,6 +2,7 @@ NAME
     Net::Server - Extensible, general Perl server engine
 
 SYNOPSIS
+      #!/usr/bin/perl -w -T
       package MyPackage;
 
       use Net::Server;
@@ -12,6 +13,10 @@ SYNOPSIS
       }
 
       MyPackage->run();
+      exit;
+
+OBTAINING
+    Visit http://seamons.com/ for the latest version.
 
 FEATURES
      * Single Server Mode
@@ -197,7 +202,7 @@ ARGUMENTS
       $server->run();
       #--------------- file test.pl ---------------
 
-    All four methods for passing arguments may be used at the same time.
+    All five methods for passing arguments may be used at the same time.
     Once an argument has been set, it is not over written if another method
     passes the same argument. `Net::Server' will look for arguments in the
     following order:
@@ -206,6 +211,7 @@ ARGUMENTS
       2) Arguments passed on command line.
       3) Arguments passed to the run method.
       4) Arguments passed via a conf file.
+      5) Arguments set in the configure_hook.
 
     Key/value pairs used by the server are removed by the configuration
     process so that server layers on top of `Net::Server' can pass and read
@@ -224,9 +230,10 @@ ARGUMENTS
       syslog_logsock    (unix|inet)              unix
       syslog_ident      "identity"               "net_server"
       syslog_logopt     (cons|ndelay|nowait|pid) pid
+      syslog_facility   \w+                      daemon
 
       port              \d+                      20203
-      host              "host"                   "localhost"
+      host              "host"                   "*"
       proto             "proto"                  "tcp"
       listen            \d+                      10
 
@@ -237,7 +244,8 @@ ARGUMENTS
       chroot            "directory"              undef
       user              (uid|username)           "nobody"
       group             (gid|group)              "nobody"
-      background        1                        undef  
+      background        1                        undef
+      setsid            1                        undef
 
     conf_file
         Filename from which to read additional key value pair arguments for
@@ -256,27 +264,31 @@ ARGUMENTS
         not overridden, log goes to STDERR. Default is undef. If the magic
         name "Sys::Syslog" is used, all logging will take place via the
         Sys::Syslog module. If syslog is used the parameters
-        *syslog_logsock*, *syslog_ident*, and *syslog_logopt* may also be
-        defined.
+        `syslog_logsock', `syslog_ident', and `syslog_logopt',and
+        `syslog_facility' may also be defined.
 
     pid_file
         Filename to store pid of parent process. Generally applies only to
         forking servers. Default is none (undef).
 
     syslog_logsock
-        Only available if *log_file* is equal to "Sys::Syslog". May be
+        Only available if `log_file' is equal to "Sys::Syslog". May be
         either "unix" of "inet". Default is "unix". See the Sys::Syslog
         manpage.
 
     syslog_ident
-        Only available if *log_file* is equal to "Sys::Syslog". Id to
+        Only available if `log_file' is equal to "Sys::Syslog". Id to
         prepend on syslog entries. Default is "net_server". See the
         Sys::Syslog manpage.
 
     syslog_logopt
-        Only available if *log_file* is equal to "Sys::Syslog". May be
+        Only available if `log_file' is equal to "Sys::Syslog". May be
         either zero or more of "pid","cons","ndelay","nowait". Default is
         "pid". See the Sys::Syslog manpage.
+
+    syslog_facility
+        Only available if `log_file' is equal to "Sys::Syslog". See the
+        Sys::Syslog manpage and the syslog manpage. Default is "daemon".
 
     port
         Local port on which to bind. If low port, process must start as
@@ -290,11 +302,12 @@ ARGUMENTS
         arguments. If `proto' is not specified there it will default to
         "tcp". If *host* is not specified, *host* will default to `host'
         specified in the arguments. If `host' is not specified there it will
-        default to "localhost". Default port is 20203.
+        default to "*". Default port is 20203.
 
     host
-        Local host or addr upon which to bind port. See the IO::Socket
-        manpage.
+        Local host or addr upon which to bind port. If a value of '*' is
+        given, the server will bind that port on all available addresses on
+        the box. See the IO::Socket manpage.
 
     proto
         Protocol to use when binding ports. See the IO::Socket manpage.
@@ -331,6 +344,12 @@ ARGUMENTS
     background
         Specifies whether or not the server should fork after the bind
         method to release itself from the command line. Defaults to undef.
+        Process will also background if `setsid' is set.
+
+    setsid
+        Specifies whether or not the server should fork after the bind
+        method to release itself from the command line and then run the
+        `POSIX::setsid()' command to truly daemonize. Defaults to undef.
 
 PROPERTIES
     All of the `ARGUMENTS' listed above become properties of the server
@@ -588,11 +607,11 @@ THANKS
     Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for patching a blatant
     problem in the reverse lookups.
 
-    Thanks to Bennett Todd <Bennett.Todd@msdw.com> for pointing out a
-    problem in Solaris 2.5.1 which does not allow multiple children to
-    accept on the same port at the same time. Also for showing some sample
-    code from Viktor Duchovni which now represents the semaphore option of
-    the serialize argument in the PreFork server.
+    Thanks to Bennett Todd <bet@rahul.net> for pointing out a problem in
+    Solaris 2.5.1 which does not allow multiple children to accept on the
+    same port at the same time. Also for showing some sample code from
+    Viktor Duchovni which now represents the semaphore option of the
+    serialize argument in the PreFork server.
 
 SEE ALSO
     Please see also the Net::Server::Fork manpage, the Net::Server::INET

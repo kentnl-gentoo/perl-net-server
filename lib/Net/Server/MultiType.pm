@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.13 2001/03/09 07:11:41 rhandom Exp $
+#  $Id: MultiType.pm,v 1.14 2001/03/20 06:28:21 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -50,6 +50,10 @@ sub run {
   my $self = ref($_[0]) ? shift() : (bless {}, shift());
   $self->{server} = {} unless defined($self->{server}) && ref($self->{server});
   my $prop = $self->{server};
+
+  ### save for a HUP
+  $prop->{commandline} = [ $0, @ARGV ]
+    unless defined $prop->{commandline};
 
   ### do the configuration now
   $self->configure(@_);

@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #  
-#  $Id: PreFork.pm,v 1.36 2001/03/13 08:06:44 rhandom Exp $
+#  $Id: PreFork.pm,v 1.45 2001/03/20 06:14:05 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -22,7 +22,7 @@ package Net::Server::PreFork;
 use strict;
 use vars qw($VERSION @ISA $LOCK_EX $LOCK_UN);
 use Net::Server;
-
+use POSIX qw(WNOHANG tmpnam);
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
@@ -104,8 +104,7 @@ sub post_bind {
       if( defined($prop->{lock_file}) ){
         $prop->{lock_file_unlink} = undef;
       }else{
-        require "POSIX.pm";
-        $prop->{lock_file} = POSIX::tmpnam();
+        $prop->{lock_file} = tmpnam;
         $prop->{lock_file_unlink} = 1;
       }
 
@@ -145,14 +144,14 @@ sub loop {
   my $self = shift;
   my $prop = $self->{server};
 
-  ### get ready for children
-  $SIG{CHLD} = 'IGNORE';
-  $prop->{children} = {};
-
   ### get ready for child->parent communication
   pipe(_READ,_WRITE);
   $prop->{_READ}  = *_READ;
   $prop->{_WRITE} = *_WRITE;
+
+  ### get ready for children
+  $SIG{CHLD} = \&sig_chld;
+  $prop->{children} = {};
 
   $self->log(3,"Beginning prefork ($prop->{min_servers} processes)\n");
 
@@ -164,6 +163,11 @@ sub loop {
   
 }
 
+### routine to avoid zombie children
+sub sig_chld {
+  1 while (waitpid(-1, WNOHANG) > 0);
+  $SIG{CHLD} = \&sig_chld;
+}
 
 ### subroutine to start up a specified number of children
 sub run_n_children {
@@ -201,6 +205,11 @@ sub run_n_children {
 sub run_child {
   my $self = shift;
   my $prop = $self->{server};
+
+  ### restore sigs (turn off warnings during)
+  my $W = $^W; $^W = 0;
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = undef;
+  $^W = $W;
 
   $self->log(4,"Child Preforked ($$)\n");
   delete $prop->{children};
@@ -306,6 +315,10 @@ sub done {
   my $prop = $self->{server};
   return 1 if $prop->{requests} >= $prop->{max_requests};
   return 1 if $prop->{SigHUPed};
+  if( ! kill(0,$prop->{ppid}) ){
+    $self->log(3,"Parent process gone away. Shutting down");
+    return 1;
+  }
 }
 
 
@@ -316,23 +329,28 @@ sub run_parent {
 
   $self->log(4,"Parent ready for children\n");
 
-  my $last_checked_for_dead    = time;
-  my $last_checked_for_waiting = time;
+  $prop->{last_checked_for_dead}    = time;
+  $prop->{last_checked_for_waiting} = time;
 
+  my $alarm = ($prop->{check_for_dead} < $prop->{check_for_waiting})
+    ? $prop->{check_for_dead} : $prop->{check_for_waiting} ;
+  $SIG{ALRM} = sub{ $self->coordinate_children; alarm($alarm); };
+
+  ### prepare to read from children
   *_READ = $prop->{_READ};
   _READ->autoflush(1);
 
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub { $self->server_close; };
-
+  ### loop on reading info from the children
   while(<_READ>){
-    my $time = time;
+    alarm(0);
 
-#    $self->log(4,"Child_status: $_");
+    ### optional test by user hook
+    last if $self->parent_read_hook($_);
 
-    ### record what the child said
-    next unless /^(\d+)\ +(.+)?/;
+    ### child should say "$pid waiting\n"
+    next unless /^(\d+)\ +(.+)$/;
     my ($pid,$status) = ($1,$2);
-
+    
     ### record the status
     if( $status eq 'exiting' ){
       delete($prop->{children}->{$pid});
@@ -340,60 +358,81 @@ sub run_parent {
       $prop->{children}->{$pid} = $status;
     }
 
-    ### periodically make sure children are alive
-    if( $time - $last_checked_for_dead > $prop->{check_for_dead} ){
-      $last_checked_for_dead = $time;
-      foreach (keys %{ $prop->{children} }){
-        ### see if the child can be killed
-        kill(0,$_) or delete $prop->{children}->{$_};
-      }
+    ### check up on the children
+    if( $status eq 'processing' || $status eq 'exiting' ){
+      $self->coordinate_children;
     }
 
-    ### tally the possible types
-    my %num = (total=>0, waiting=>0, processing=>0);
+    alarm($alarm);
+  }
+
+  ### shut down the children
+  $self->server_close;
+}
+
+### allow for other process to tie in to the parent read
+sub parent_read_hook {}
+
+
+### routine to determine if more children need to be started or stopped
+sub coordinate_children {
+  my $self = shift;
+  my $prop = $self->{server};
+  my $time = time;
+
+  ### periodically make sure children are alive
+  if( $time - $prop->{last_checked_for_dead} > $prop->{check_for_dead} ){
+    $prop->{last_checked_for_dead} = $time;
     foreach (keys %{ $prop->{children} }){
-      $num{total} ++;
-      $num{ $prop->{children}->{$_} } ++;
+      ### see if the child can be killed
+      kill(0,$_) or delete $prop->{children}->{$_};
     }
-
-    ### have all the servers we're going to get
-    if( $num{total} >= $prop->{max_servers} ){
-      # do nothing
-
-    ### need more min_servers
-    }elsif( $num{total} < $prop->{min_servers} ){
-      $self->run_n_children( $prop->{min_servers} - $num{total} );
-
-    ### need more spare_servers
-    }elsif( $num{waiting} < $prop->{spare_servers} ){
-      $self->run_n_children( $prop->{spare_servers} - $num{waiting} );
-
-    ### need to remove some extra waiting servers
-    }elsif( $num{waiting} > $prop->{spare_servers} 
-            && $num{waiting} + $num{processing} > $prop->{min_servers} ){
-      if( $time - $last_checked_for_waiting > $prop->{check_for_waiting} ){
-        $last_checked_for_waiting = $time;
-        my $n = $num{waiting} + $num{processing} - $prop->{min_servers};
-        if( $n > $num{waiting} - $prop->{spare_servers} ){
-          $n = $num{waiting} - $prop->{spare_servers};
-        }
-        foreach (keys %{ $prop->{children} }){
-          next unless $prop->{children}->{$_} eq 'waiting';
-          last unless $n--;
-          kill(1,$_);
-        }
+  }
+  
+  ### tally the possible types
+  my %num = (total=>0, waiting=>0, processing=>0);
+  foreach (keys %{ $prop->{children} }){
+    $num{total} ++;
+    $num{ $prop->{children}->{$_} } ++;
+  }
+  
+  ### need more min_servers
+  if( $num{total} < $prop->{min_servers} ){
+    $self->run_n_children( $prop->{min_servers} - $num{total} );
+    
+  ### need more spare_servers
+  }elsif( $num{waiting} < $prop->{spare_servers} 
+          && $num{total} < $prop->{max_servers} ){
+    $self->run_n_children( $prop->{spare_servers} - $num{waiting} );
+    
+  ### need to remove some extra waiting servers
+  }elsif( $num{waiting} > $prop->{spare_servers} 
+          && $num{waiting} + $num{processing} > $prop->{min_servers} ){
+    if( $time - $prop->{last_checked_for_waiting} > $prop->{check_for_waiting} ){
+      $prop->{last_checked_for_waiting} = $time;
+      my $n = $num{waiting} + $num{processing} - $prop->{min_servers};
+      if( $n > $num{waiting} - $prop->{spare_servers} ){
+        $n = $num{waiting} - $prop->{spare_servers};
       }
-
+      foreach (keys %{ $prop->{children} }){
+        next unless $prop->{children}->{$_} eq 'waiting';
+        last unless $n--;
+        kill(1,$_);
+      }
     }
-
-    ### end of while
+    
   }
 }
+
 
 ### routine to shut down the server (and all forked children)
 sub server_close {
   my $self = shift;
   my $prop = $self->{server};
+
+  my $W = $^W; $^W = 0;
+  $SIG{INT} = undef;
+  $^W = $W;
 
   ### if a parent, fork off cleanup sub and close
   if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
@@ -617,7 +656,7 @@ and C<max_servers>.
 
 =head1 HOOKS
 
-There are two additional hooks in the PreFork server.
+There are three additional hooks in the PreFork server.
 
 =over 4
 
@@ -635,6 +674,12 @@ the most shared memory possible is used.
 This hook takes place immediately before the child tells
 the parent that it is exiting.  It is intended for 
 saving out logged information or other general cleanup.
+
+=item C<$self-E<gt>parent_read_hook()>
+
+This hook occurs any time that the parent reads information
+from the child.  The line from the child is sent as an
+argument.
 
 =back
 

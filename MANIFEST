@@ -15,4 +15,5 @@ t/Server_INET.t                 Test script for Net::Server::INET
 t/Server_MultiType.t            Test script for Net::Server::MultiType
 t/Server_PreFork.t              Test script for Net::Server::PreFork
 t/Server_Single.t               Test script for Net::Server::Single
-
+examples/httpd                  Sample http daemon
+examples/LoadTester.pl          Sample script to hit upon a running server

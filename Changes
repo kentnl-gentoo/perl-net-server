@@ -1,6 +1,36 @@
 Revision history for Perl extension Net::Server.
 
-0.51  Mar 13 01:16 2001
+0.55  Mar 19 10:44 2001
+        - Allow overwrite of pid file - safe as other user.
+        - More unified Signal handling, removal of duplicate code.
+        - Allow Fork Server to shutdown the socket immediately
+                after client accept to allow parent to HUP more
+                 easily.
+        - Check to see if parent process is still around in PreFork
+                Server.  (Don't keep running if parent was
+                 "kill 9"ed.)
+        - Save commandline parameters in preparation for HUP
+
+0.54  Mar 16 12:47 2001
+        - Better handling of sigs in prefork
+        - Improved logic on child coordination routine
+        - Added parent_read_hook
+        - Added httpd example
+        - Added LoadTester.pl example
+
+0.53  Mar 14 01:13 2001
+        - Allow host to be set to '*'
+                Allows for the server to bind to port whatever
+                on all addresses at that box.
+        - Make passing of host and proto on command line
+                taint clean.
+        - Added setsid functionality.
+        - Added syslog_facility option - default is daemon.
+        - Changed Fork and PreFork to handle $SIG{CHLD} in
+                a more reliable fashion.
+        - Added parent_read_hook
+
+0.52  Mar 13 01:16 2001
         - Added syslog ability.
                 This allows for logging to syslog instead
                 of STDERR or a log file.  Logging still

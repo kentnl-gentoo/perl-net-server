@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #  
-#  $Id: Fork.pm,v 1.11 2001/03/13 08:07:16 rhandom Exp $
+#  $Id: Fork.pm,v 1.15 2001/03/20 06:07:33 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -22,7 +22,7 @@ package Net::Server::Fork;
 use strict;
 use vars qw($VERSION @ISA);
 use Net::Server;
-
+use POSIX qw(WNOHANG);
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
@@ -54,7 +54,7 @@ sub loop {
   my $prop = $self->{server};
 
   ### get ready for children
-  $SIG{CHLD} = 'IGNORE';
+  $SIG{CHLD} = \&sig_chld;
   $prop->{children} = {};
 
   my $last_checked_for_dead = time;
@@ -83,10 +83,6 @@ sub loop {
 
     }
 
-    ### be sure to allow shutdown of children
-    ### this must be done after the child is forked
-    $self->set_sigs;
-
     my $time = time;
 
     ### periodically see which children are alive
@@ -101,18 +97,38 @@ sub loop {
   }
 }
 
-### do a one time set up of some signals in the parent
-sub set_sigs {
+### routine to avoid zombie children
+sub sig_chld {
+  1 while (waitpid(-1, WNOHANG) > 0);
+  $SIG{CHLD} = \&sig_chld;
+}
+
+### override a little to restore sigs
+sub run_client_connection {
   my $self = shift;
-  return if defined $self->{server}->{sigs_set};
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub { $self->server_close; };
-  $self->{server}->{sigs_set} = 1;
+
+  ### close the main sock, we still have
+  ### the client handle, this will allow us
+  ### to HUP the parent at any time
+  $_ = undef foreach @{ $self->{sock} };
+
+  ### restore sigs (turn off warnings during)
+  my $W = $^W; $^W = 0;
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = undef;
+  $^W = $W;
+
+  $self->SUPER::run_client_connection;
+
 }
 
 ### routine to shut down the server (and all forked children)
 sub server_close {
   my $self = shift;
   my $prop = $self->{server};
+
+  my $W = $^W; $^W = 0;
+  $SIG{INT} = undef;
+  $^W = $W;
 
   ### if a parent, fork off cleanup sub and close
   if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
