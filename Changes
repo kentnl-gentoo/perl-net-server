@@ -1,5 +1,23 @@
 Revision history for Perl extension Net::Server.
 
+0.58  Apr 06 12:29 2001
+        - SIG HUP is complete.  Fixed bug in SIG HUP'ing 
+                PreFork mode.  Now effectively restarts.
+        - Various clean ups in code.
+        - More unification of code.
+
+0.57  Mar 29 01:36 2001
+        - SIG HUP is now functional on multiport mode under
+                Single and Fork Mode.  No functionality is
+                lost under PreFork, but HUP'ing results in
+                seg fault.
+        - Various bug fixes.
+
+0.56  Mar 20 12:34 2001
+        - Catch SIG pipes
+        - Clean up of existing signal handling.
+        - Trim memory in PreFork
+
 0.55  Mar 19 10:44 2001
         - Allow overwrite of pid file - safe as other user.
         - More unified Signal handling, removal of duplicate code.

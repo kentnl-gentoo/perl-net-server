@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #  
-#  $Id: Server.pm,v 1.90 2001/03/20 06:42:08 rhandom Exp $
+#  $Id: Server.pm,v 1.100 2001/04/06 18:09:55 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -24,8 +24,10 @@ package Net::Server;
 use strict;
 use Socket qw( inet_aton inet_ntoa unpack_sockaddr_in AF_INET );
 use IO::Socket ();
+use POSIX ();
+use Fcntl ();
 
-$Net::Server::VERSION = '0.55';
+$Net::Server::VERSION = '0.58';
 
 ### program flow
 sub run {
@@ -198,7 +200,6 @@ sub post_configure {
 
   ### completely remove myself from parent process
   if( defined($prop->{setsid}) ){
-    require "POSIX.pm";
     POSIX::setsid();
   }
 
@@ -268,21 +269,50 @@ sub bind {
   my $prop = $self->{server};
 
   ### connect to any ports
-  foreach (my($i)=0 ; $i<=$#{ $prop->{port} } ; $i++){
-    my ($host,$port,$proto) = split(/:/, $prop->{port}->[$i]);
-    $self->log(2,"Binding to $proto port $port on host $host\n");
 
-    my %args = (LocalPort => $port,
-                Proto     => $proto,
-                Listen    => $prop->{listen},
-                Reuse     => 1,);
-    $args{LocalAddr} = $host if $host !~ /\*/;
+  ### connect to previously bound ports
+  if( exists $ENV{BOUND_SOCKETS} ){
 
-    $prop->{sock}->[$i] = IO::Socket::INET->new( %args )
-          or $self->fatal("Can't connect to $proto port $port on $host [$!]");
+    $self->log(2,"Binding to open file descriptors\n");
+    my $i = 0;
+    foreach ( split(/\|/, $ENV{BOUND_SOCKETS}) ){
+      $self->fatal("Bad file descriptor")
+        unless /^(\d+)$/;
+      my $fd = $1;
 
-    $self->fatal("Back sock [$i]!")
-      unless $prop->{sock}->[$i];
+      $prop->{sock}->[$i] = IO::Socket::INET->new();
+      $prop->{sock}->[$i]->fdopen( $fd, 'w' )
+        or $self->fatal("Error opening to file descriptor ($fd) [$!]");
+      $i++;
+    }
+    delete $ENV{BOUND_SOCKETS};
+
+  ### connect to fresh ports
+  }else{
+
+    my $i = 0;
+    foreach ( @{ $prop->{port} } ){
+      my ($host,$port,$proto) = split /:/;
+      $self->log(2,"Binding to $proto port $port on host $host\n");
+      
+      my %args = (LocalPort => $port,
+                  Proto     => $proto,
+                  Listen    => $prop->{listen},
+                  Reuse     => 1,);
+      $args{LocalAddr} = $host if $host !~ /\*/;
+
+      $prop->{sock}->[$i] = IO::Socket::INET->new( %args )
+        or $self->fatal("Can't connect to $proto port $port on $host [$!]");
+
+      $self->fatal("Back sock [$i]!")
+        unless $prop->{sock}->[$i];
+      $i++;
+    }
+  }
+
+  ### make sure we had at least one
+  if( @{ $prop->{sock} } < 1 ){
+    $self->fatal("No valid sockets found");
   }
 
   ### if more than one port, we'll need to select on it
@@ -365,9 +395,25 @@ sub post_bind {
   ### set some sigs
   $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub { $self->server_close; };
 
+  ### most cases, a closed pipe will take care of itself
+  $SIG{PIPE} = 'IGNORE';
+
+  ### record warns and dies
+  $SIG{__WARN__} = sub { $self->log(1, $_[0]); warn $_[0]; };
+  $SIG{__DIE__}  = sub { $self->log(0, $_[0]); die  $_[0]; };
+
+  ### catch children (mainly for Fork and PreFork but works for any chld)
+  $SIG{CHLD} = \&sig_chld;
+
   ### catch sighup
   $SIG{HUP} = sub { $self->sig_hup; }
 
+}
+
+### routine to avoid zombie children
+sub sig_chld {
+  1 while (waitpid(-1, POSIX::WNOHANG()) > 0);
+  $SIG{CHLD} = \&sig_chld;
 }
 
 
@@ -406,6 +452,9 @@ sub accept {
       ### anything server type specific
       $sock = $self->accept_multi_port;
       
+      ### last one if HUPed
+      return 0 if defined $prop->{_HUP};
+
     ### single port is bound - just accept
     }else{
 
@@ -418,7 +467,11 @@ sub accept {
       $self->fatal("Recieved a bad sock!");
     }
 
+    ### blocking accept
     $prop->{client} = $sock->accept();
+
+    ### last one if HUPed
+    return 0 if defined $prop->{_HUP};
     
     ### success
     return 1 if defined $prop->{client};
@@ -630,20 +683,104 @@ sub pre_server_close_hook {}
 sub server_close{
   my $self = shift;
   my $prop = $self->{server};
+
+  $SIG{INT} = 'DEFAULT';
+
+  $self->log(2,$self->log_time . " Server closing!!!");
+
+  ### remove children (only applies to Fork and PreFork
+  if( defined $prop->{children} ){
+    $self->close_children();
+  }
+
+  ### remove files
+  if( defined $prop->{lock_file}
+      && -e $prop->{lock_file}
+      && defined $prop->{lock_file_unlink} ){
+    unlink $prop->{lock_file};
+  }
   if( defined $prop->{pid_file}
       && -e $prop->{pid_file} 
       && defined $prop->{pid_file_unlink} ){
     unlink $prop->{pid_file};
   }
+
+  ### HUP process
+  if( defined $prop->{_HUP} ){
+    $self->hup_server;
+  }
+
   exit;
 }
 
 
-### handle sighup - for now, just close the server
-### eventually this should re-exec
+### SIG INT the children
+### This method is only used by forking servers (ie Fork, PreFork)
+sub close_children {
+  my $self = shift;
+  my $prop = $self->{server};
+
+  return unless defined $prop->{children} && %{ $prop->{children} };
+
+  while ( %{ $prop->{children} } ){
+    my $pid = each %{ $prop->{children} };
+
+    ### if it is killable, kill it
+    if( not defined($pid) or kill(2,$pid) or not kill(0,$pid) ){
+      delete $prop->{children}->{$pid};
+    }
+
+  }
+  
+}
+
+### handle sig hup
+### this will prepare the server for a restart via exec
 sub sig_hup {
   my $self = shift;
-  $self->fatal("Sig HUP not implemented");
+  my $prop = $self->{server};
+
+  ### prepare for exec
+  my $i   = 0;
+  my @fds = ();
+  $prop->{_HUP} = [];
+  foreach my $sock ( @{ $prop->{sock} } ){
+
+    ### duplicate the sock
+    my $fd = POSIX::dup($sock->fileno())
+      or $self->fatal("Can't dup socket [$!]");
+
+    ### hold on to the socket copy until exec
+    $prop->{_HUP}->[$i] = IO::Socket::INET->new();
+    $prop->{_HUP}->[$i]->fdopen( $fd, 'w' )
+      or $self->fatal("Can't open to file descriptor [$!]");
+
+    ### turn off the FD_CLOEXEC bit to allow reuse on exec
+    $prop->{_HUP}->[$i]->fcntl( Fcntl::F_SETFD(), my $flags = "" );
+
+    push @fds, $prop->{_HUP}->[$i]->fileno();
+
+    ### remove anything that may be blocking
+    $sock->close();
+    
+    $i++;
+  }
+  
+  ### remove any blocking obstacle
+  if( defined $prop->{select} ){
+    delete $prop->{select};
+  }
+
+  $ENV{BOUND_SOCKETS} = join("|",@fds);
+}
+
+### restart the server using prebound sockets
+sub hup_server {
+  my $self = shift;
+
+  $self->log(0,$self->log_time()." HUP'ing server");
+
+  exec @{ $self->{server}->{commandline} };
 }
 
 ###----------------------------------------------------------###
@@ -762,7 +899,11 @@ sub process_args {
         && exists $template->{$1} ){
       my ($key,$val) = ($1,$3);
       splice( @$ref, $i, 1 );
-      $val = splice( @$ref, $i, 1 ) if not defined $val;
+      if( not defined($val) ){
+        die ("Odd number of args passed to process_args. Fatal.\n")
+          if $i > $#$ref;
+        $val = splice( @$ref, $i, 1 );
+      }
       $i--;
       $val =~ s/%([A-F0-9])/chr(hex($1))/eig;
 
@@ -1494,24 +1635,10 @@ C<Net::Server::Thread> as a new personality.
 
 Explore any other personalities
 
-=item Sig Handling
-
-Solidify which signals are handled by base class.  Possibly
-catch more that are ignored currently.
-
-=item C<HUP>
-
-Allow for a clean hup allowing for re-exec and re-read of
-configuration files.  This includes multiport mode.
-
 =item Net::HTTPServer, etc
 
 Create various types of servers.  Possibly, port exising
 servers to user Net::Server as a base layer.
-
-=item More documentation
-
-Show more examples and explain process flow more.
 
 =back
 
@@ -1536,7 +1663,9 @@ Paul T. Seamons paul@seamons.com
 Thanks to Rob Brown <rbrown@about-inc.com> for help with
 miscellaneous concepts such as tracking down the
 serialized select via flock ala Apache and the reference
-to IO::Select making multiport servers possible.  
+to IO::Select making multiport servers possible.  And for
+researching into allowing sockets to remain open upon
+exec (making HUP possible).
 
 Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for
 patching a blatant problem in the reverse lookups.

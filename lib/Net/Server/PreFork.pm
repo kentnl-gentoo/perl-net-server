@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #  
-#  $Id: PreFork.pm,v 1.45 2001/03/20 06:14:05 rhandom Exp $
+#  $Id: PreFork.pm,v 1.52 2001/04/06 18:07:36 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -21,19 +21,15 @@ package Net::Server::PreFork;
 
 use strict;
 use vars qw($VERSION @ISA $LOCK_EX $LOCK_UN);
+use POSIX ();
+use Fcntl ();
 use Net::Server;
-use POSIX qw(WNOHANG tmpnam);
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
 ### fall back to parent methods
 @ISA = qw(Net::Server);
 
-### there is something to be said for hard coding numbers,
-### this could be done by "use Fcntl qw(LOCK_EX LOCK_UN);"
-### however, that adds 70k to each process (24k unshared)
-*LOCK_EX = \2;
-*LOCK_UN = \8;
 
 ### override-able options for this package
 sub options {
@@ -80,6 +76,7 @@ sub post_configure {
 }
 
 
+### now that we are bound prepare serialization
 sub post_bind {
   my $self = shift;
   my $prop = $self->{server};
@@ -104,7 +101,7 @@ sub post_bind {
       if( defined($prop->{lock_file}) ){
         $prop->{lock_file_unlink} = undef;
       }else{
-        $prop->{lock_file} = tmpnam;
+        $prop->{lock_file} = POSIX::tmpnam();
         $prop->{lock_file_unlink} = 1;
       }
 
@@ -150,7 +147,6 @@ sub loop {
   $prop->{_WRITE} = *_WRITE;
 
   ### get ready for children
-  $SIG{CHLD} = \&sig_chld;
   $prop->{children} = {};
 
   $self->log(3,"Beginning prefork ($prop->{min_servers} processes)\n");
@@ -161,12 +157,6 @@ sub loop {
   ### finish the parent routines
   $self->run_parent;
   
-}
-
-### routine to avoid zombie children
-sub sig_chld {
-  1 while (waitpid(-1, WNOHANG) > 0);
-  $SIG{CHLD} = \&sig_chld;
 }
 
 ### subroutine to start up a specified number of children
@@ -207,9 +197,7 @@ sub run_child {
   my $prop = $self->{server};
 
   ### restore sigs (turn off warnings during)
-  my $W = $^W; $^W = 0;
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = undef;
-  $^W = $W;
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = 'DEFAULT';
 
   $self->log(4,"Child Preforked ($$)\n");
   delete $prop->{children};
@@ -231,8 +219,6 @@ sub run_child {
     }
     $prop->{SigHUPed} = 1;
   };
-
-  local *LOCK;
 
   ### accept connections
   while( $self->accept() ){
@@ -271,11 +257,13 @@ sub accept {
   my $self = shift;
   my $prop = $self->{server};
 
+  local *LOCK;
+
   ### serialize the child accepts
   if( $prop->{serialize} eq 'flock' ){
     open(LOCK,">$prop->{lock_file}")
       || $self->fatal("Couldn't open lock file \"$prop->{lock_file}\" [$!]");
-    flock(LOCK,$LOCK_EX)
+    flock(LOCK,Fcntl::LOCK_EX())
       || $self->fatal("Couldn't get lock on file \"$prop->{lock_file}\" [$!]");
 
   }elsif( $prop->{serialize} eq 'semaphore' ){
@@ -293,7 +281,7 @@ sub accept {
 
   ### unblock serialization
   if( $prop->{serialize} eq 'flock' ){
-    flock(LOCK,$LOCK_UN);
+    flock(LOCK,Fcntl::LOCK_UN());
 
   }elsif( $prop->{serialize} eq 'semaphore' ){
     $prop->{sem}->op( 0, 1, IPC::SysV::SEM_UNDO() )
@@ -337,8 +325,14 @@ sub run_parent {
   $SIG{ALRM} = sub{ $self->coordinate_children; alarm($alarm); };
 
   ### prepare to read from children
-  *_READ = $prop->{_READ};
+  local *_READ = $prop->{_READ};
   _READ->autoflush(1);
+
+  ### make sure we unblock everything
+  $SIG{HUP} = sub{
+    close _READ;
+    $self->SUPER::sig_hup();
+  };
 
   ### loop on reading info from the children
   while(<_READ>){
@@ -369,6 +363,7 @@ sub run_parent {
   ### shut down the children
   $self->server_close;
 }
+
 
 ### allow for other process to tie in to the parent read
 sub parent_read_hook {}
@@ -430,61 +425,21 @@ sub server_close {
   my $self = shift;
   my $prop = $self->{server};
 
-  my $W = $^W; $^W = 0;
-  $SIG{INT} = undef;
-  $^W = $W;
-
   ### if a parent, fork off cleanup sub and close
   if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
 
-    $self->log(2,$self->log_time . " Server closing!!!");
-    $self->close_children;
-    exit;
+    $self->SUPER::server_close();
 
   ### if a child, signal the parent and close
   ### normally the child shouldn't, but if they do...
   }else{
+
     kill(2,$prop->{ppid});
-    exit;
-  }
-
-}
-
-### Fork another process (that won't deal with sig chld's) to
-### sig int the children and then exit itself
-sub close_children {
-  my $self = shift;
-  my $prop = $self->{server};
-
-  if( defined $prop->{children} && %{ $prop->{children} } ){
-
-    my $pid = fork;
-    if( not defined $pid ){
-      $self->log(0,"Can't fork to clean children [$!]");
-    }
-    return if $pid;
-
-    foreach (keys %{ $prop->{children} }){
-      kill(2,$_);
-    }
 
   }
   
-  ### remove extra files
-  if( defined $prop->{lock_file}
-      && -e $prop->{lock_file}
-      && defined $prop->{lock_file_unlink} ){
-    unlink $prop->{lock_file};
-  }
-  if( defined $prop->{pid_file}
-      && -e $prop->{pid_file}
-      && defined $prop->{pid_file_unlink} ){
-    unlink $prop->{pid_file};
-  }
-
   exit;
 }
-
 
 1;
 

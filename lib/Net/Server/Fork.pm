@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #  
-#  $Id: Fork.pm,v 1.15 2001/03/20 06:07:33 rhandom Exp $
+#  $Id: Fork.pm,v 1.20 2001/03/30 07:08:19 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -22,7 +22,6 @@ package Net::Server::Fork;
 use strict;
 use vars qw($VERSION @ISA);
 use Net::Server;
-use POSIX qw(WNOHANG);
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
@@ -54,7 +53,6 @@ sub loop {
   my $prop = $self->{server};
 
   ### get ready for children
-  $SIG{CHLD} = \&sig_chld;
   $prop->{children} = {};
 
   my $last_checked_for_dead = time;
@@ -83,9 +81,8 @@ sub loop {
 
     }
 
-    my $time = time;
-
     ### periodically see which children are alive
+    my $time = time;
     if( $time - $last_checked_for_dead > $prop->{check_for_dead} ){
       $last_checked_for_dead = $time;
       foreach (keys %{ $prop->{children} }){
@@ -97,12 +94,6 @@ sub loop {
   }
 }
 
-### routine to avoid zombie children
-sub sig_chld {
-  1 while (waitpid(-1, WNOHANG) > 0);
-  $SIG{CHLD} = \&sig_chld;
-}
-
 ### override a little to restore sigs
 sub run_client_connection {
   my $self = shift;
@@ -110,12 +101,10 @@ sub run_client_connection {
   ### close the main sock, we still have
   ### the client handle, this will allow us
   ### to HUP the parent at any time
-  $_ = undef foreach @{ $self->{sock} };
+  $_ = undef foreach @{ $self->{server}->{sock} };
 
   ### restore sigs (turn off warnings during)
-  my $W = $^W; $^W = 0;
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = undef;
-  $^W = $W;
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = 'DEFAULT';
 
   $self->SUPER::run_client_connection;
 
@@ -126,56 +115,21 @@ sub server_close {
   my $self = shift;
   my $prop = $self->{server};
 
-  my $W = $^W; $^W = 0;
-  $SIG{INT} = undef;
-  $^W = $W;
-
   ### if a parent, fork off cleanup sub and close
   if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
 
-    $self->log(2,$self->log_time . " Server closing!!!");
-    $self->close_children;
-    exit;
+    $self->SUPER::server_close();
 
   ### if a child, signal the parent and close
   ### normally the child shouldn't, but if they do...
   }else{
+
     kill(2,$prop->{ppid});
-    exit;
-  }
-
-}
-
-### Fork another process (that won't deal with sig chld's) to
-### sig int the children and then exit itself
-sub close_children {
-  my $self = shift;
-  my $prop = $self->{server};
-
-  if( defined $prop->{children} && %{ $prop->{children} } ){
-
-    my $pid = fork;
-    if( not defined $pid ){
-      $self->log(1,"Can't fork to clean children [$!]");
-    }
-    return if $pid;
-
-    foreach (keys %{ $prop->{children} }){
-      kill(2,$_);
-    }
 
   }
   
-  ### remove extra files
-  if( defined $prop->{pid_file}
-      && -e $prop->{pid_file}
-      && defined $prop->{pid_file_unlink} ){
-    unlink $prop->{pid_file};
-  }
-
   exit;
 }
-
 
 1;
 

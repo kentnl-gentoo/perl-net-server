@@ -569,20 +569,9 @@ TO DO
     Other Personalities
         Explore any other personalities
 
-    Sig Handling
-        Solidify which signals are handled by base class. Possibly catch
-        more that are ignored currently.
-
-    `HUP'
-        Allow for a clean hup allowing for re-exec and re-read of
-        configuration files. This includes multiport mode.
-
     Net::HTTPServer, etc
         Create various types of servers. Possibly, port exising servers to
         user Net::Server as a base layer.
-
-    More documentation
-        Show more examples and explain process flow more.
 
 FILES
       The following files are installed as part of this
@@ -602,7 +591,8 @@ THANKS
     Thanks to Rob Brown <rbrown@about-inc.com> for help with miscellaneous
     concepts such as tracking down the serialized select via flock ala
     Apache and the reference to IO::Select making multiport servers
-    possible.
+    possible. And for researching into allowing sockets to remain open upon
+    exec (making HUP possible).
 
     Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for patching a blatant
     problem in the reverse lookups.

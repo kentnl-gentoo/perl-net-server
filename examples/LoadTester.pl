@@ -1,6 +1,5 @@
 #!/usr/bin/perl -w
 
-package LoadTester;
 #use Time::HiRes qw(time);  # uncomment for more accuracy
 use vars qw(@ISA);
 use strict;
@@ -8,7 +7,7 @@ use Net::Server::PreFork;
 use IO::Socket;
 
 @ISA = qw(Net::Server::PreFork);
-LoadTester->run();
+main->run();
 exit;
 
 $|=1;

@@ -2,7 +2,7 @@
 #
 #  Net::Server::INET - Net::Server personality
 #  
-#  $Id: INET.pm,v 1.16 2001/03/09 07:12:19 rhandom Exp $
+#  $Id: INET.pm,v 1.17 2001/03/29 08:24:45 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -52,6 +52,9 @@ sub post_accept {
   $self->{server}->{client} = Net::Server::INET::Handle->new();
 
 }
+
+### can't hup single process
+sub hup_server {}
 
 ################################################################
 ### the rest are methods to tie STDIN and STDOUT to a GLOB
