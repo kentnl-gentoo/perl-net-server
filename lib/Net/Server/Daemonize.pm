@@ -2,7 +2,7 @@
 #
 #  Net::Server::Daemonize - bdpf - Daemonization utilities.
 #  
-#  $Id: Daemonize.pm,v 1.7 2002/09/24 18:55:15 rhandom Exp $
+#  $Id: Daemonize.pm,v 1.8 2003/11/06 18:41:24 hookbot Exp $
 #  
 #  Copyright (C) 2001, Jeremy Howard
 #                      j+daemonize@howard.fm
@@ -204,8 +204,7 @@ sub set_uid {
     die "Couldn't become uid \"$uid\"\n";
   }
   my $result = POSIX::setuid( $uid );
-  if( ! defined($result)
-      || $result != $uid ){ # assuming this is true for all systems
+  if( ! defined($result) ){
     die "Couldn't POSIX::setuid to \"$uid\" [$!]\n";
   }
   return 1;

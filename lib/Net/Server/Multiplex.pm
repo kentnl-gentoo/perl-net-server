@@ -2,7 +2,7 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.8 2003/03/06 21:09:39 hookbot Exp $
+#  $Id: Multiplex.pm,v 1.11 2003/11/01 19:48:21 hookbot Exp $
 #
 #  Copyright (C) 2001-2003, Rob Brown <bbb@cpan.org>
 #
@@ -21,8 +21,9 @@ use strict;
 use vars qw($VERSION @ISA);
 use Net::Server;
 use Net::Server::SIG qw(register_sig check_sigs);
-use IO::Multiplex 1.02;
 use Carp qw(confess);
+eval { require IO::Multiplex; import IO::Multiplex 1.05; };
+$@ && warn "Module IO::Multiplex is required for Multiplex.";
 
 $VERSION = $Net::Server::VERSION;
 @ISA = qw(Net::Server);
@@ -371,7 +372,7 @@ The following represents the client processing program flow:
     $self->mux_connection; # IO::Multiplex style
 
     for (every packet received) {
-      $self->mux_input;  # MOTE: Multiplexed with accept() above
+      $self->mux_input;  # NOTE: Multiplexed with accept() above
     }
 
   }else{

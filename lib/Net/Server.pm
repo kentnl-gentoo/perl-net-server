@@ -2,11 +2,12 @@
 #
 #  Net::Server - bdpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.47 2003/03/06 17:08:27 hookbot Exp $
+#  $Id: Server.pm,v 1.52 2003/11/06 19:56:48 hookbot Exp $
 #
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul at seamons.com
-#                      http://seamons.com/
+#  Copyright (C) 2001-2003
+#    Paul T Seamons (paul at seamons.com)
+#    http://seamons.com/
+#    Rob Brown (bbb at cpan.org)
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -34,7 +35,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.85';
+$VERSION = '0.86';
 
 ### program flow
 sub run {
@@ -134,6 +135,7 @@ sub configure {
   my $self = shift;
   my $prop = $self->{server};
   my $template = undef;
+  local @_ = @_; # fix some issues under old perls on alpha systems
 
   ### allow for a template to be passed
   if( $_[0] && ref($_[0]) ){
@@ -475,8 +477,10 @@ sub post_bind {
     }
   };
   if( $@ ){
-    if( $< == 0 || $> == 0 ){
+    if( $> == 0 ){
       $self->fatal( $@ );
+    } elsif( $< == 0){
+      $self->log(2,"NOTICE: Effective UID changed, but Real UID is 0: $@");
     }else{
       $self->log(2,$@);
     }
@@ -2058,14 +2062,15 @@ Paul T. Seamons <paul at seamons.com>
 
 =head1 THANKS
 
-Thanks to Rob Brown <rbrown at about-inc.com> for help with
+Thanks to Rob Brown (bbb at cpan.org) for help with
 miscellaneous concepts such as tracking down the
 serialized select via flock ala Apache and the reference
 to IO::Select making multiport servers possible.  And for
 researching into allowing sockets to remain open upon
 exec (making HUP possible).
+Rob Brown is also the maintainer for Net::Server.
 
-Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for
+Thanks to Jonathan J. Miner <miner at doit.wisc.edu> for
 patching a blatant problem in the reverse lookups.
 
 Thanks to Bennett Todd <bet at rahul.net> for
