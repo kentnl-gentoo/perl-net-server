@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #  
-#  $Id: Server.pm,v 1.120 2001/07/05 06:15:59 rhandom Exp $
+#  $Id: Server.pm,v 1.19 2001/08/23 17:19:34 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -23,12 +23,18 @@ package Net::Server;
 
 use strict;
 use vars qw( $VERSION );
-use Socket qw( inet_aton inet_ntoa AF_INET );
+use Socket qw( inet_aton inet_ntoa AF_INET AF_UNIX SOCK_DGRAM SOCK_STREAM );
 use IO::Socket ();
+use IO::Select ();
 use POSIX ();
 use Fcntl ();
+use Net::Server::Proto ();
+use Net::Server::Daemonize qw(check_pid_file create_pid_file
+                              get_uid get_gid set_uid set_gid
+                              safe_fork
+                              );
 
-$VERSION = '0.65';
+$VERSION = '0.75';
 
 ### program flow
 sub run {
@@ -43,6 +49,10 @@ sub run {
   $self->{server}->{commandline} = [ $0, @ARGV ]
     unless defined $self->{server}->{commandline};
 
+  ### prepare to cache configuration parameters
+  $self->{server}->{conf_file_args} = undef;
+  $self->{server}->{configure_args} = undef;
+
   $self->configure_hook;      # user customizable hook
 
   $self->configure(@_);       # allow for reading of commandline,
@@ -53,6 +63,10 @@ sub run {
   $self->post_configure_hook; # user customizable hook
 
   $self->pre_bind;            # finalize ports to be bound
+
+  ### get rid of cached config parameters
+  delete $self->{server}->{conf_file_args};
+  delete $self->{server}->{configure_args};
 
   $self->bind;                # connect to port(s)
                               # setup selection handle for multi port
@@ -118,16 +132,29 @@ sub configure_hook {}
 sub configure {
   my $self = shift;
   my $prop = $self->{server};
+  my $template = undef;
+
+  ### allow for a template to be passed
+  if( $_[0] && ref($_[0]) ){
+    $template = shift;
+  }
 
   ### do command line
-  $self->process_args( \@ARGV ) if defined @ARGV;
+  $self->process_args( \@ARGV, $template ) if defined @ARGV;
 
   ### do startup file args
-  $self->process_args( \@_ ) if defined @_;
+  ### cache a reference for multiple calls later
+  my $args = undef;
+  if( $prop->{configure_args} && ref($prop->{configure_args}) ){
+    $args = $prop->{configure_args};
+  }else{
+    $args = $prop->{configure_args} = \@_;
+  }
+  $self->process_args( $args, $template ) if defined $args;
 
   ### do a config file
   if( defined $prop->{conf_file} ){
-    $self->process_conf( $prop->{conf_file} );
+    $self->process_conf( $prop->{conf_file}, $template );
   }
 
 }
@@ -190,6 +217,13 @@ sub post_configure {
     _SERVER_LOG->autoflush(1);
 
   }
+
+  ### see if a daemon is already running
+  if( defined $prop->{pid_file} ){
+    if( ! eval{ check_pid_file( $prop->{pid_file} ) } ){
+      $self->fatal( $@ );
+    }
+  }
   
   ### completetly daemonize by closing STDIN, STDOUT (should be done before fork)
   if( defined($prop->{setsid}) || length($prop->{log_file}) ){
@@ -198,21 +232,34 @@ sub post_configure {
   }
 
   ### background the process
-  if( defined($prop->{background}) || defined($prop->{setsid}) ){
-    my $pid = fork;
-    if( not defined $pid ){ $self->fatal("Couldn't fork [$!]"); }
-    exit if $pid;
+  if( defined($prop->{setsid}) || defined($prop->{background}) ){
+    my $pid = eval{ safe_fork() };
+    if( not defined $pid ){ $self->fatal( $@ ); }
+    exit(0) if $pid;
     $self->log(2,"Process Backgrounded");
   }
 
   ### completely remove myself from parent process
   if( defined($prop->{setsid}) ){
-    POSIX::setsid();
+    &POSIX::setsid();
   }
 
   ### completetly daemonize by closing STDERR (should be done after fork)
-  if( defined($prop->{setsid}) || length($prop->{log_file}) ){
+  if( length($prop->{log_file}) ){
+    open STDERR, '>&_SERVER_LOG' || die "Can't open STDERR to _SERVER_LOG [$!]";
+  }elsif( defined($prop->{setsid}) ){
     open STDERR, '>&STDOUT' || die "Can't open STDERR to STDOUT [$!]";
+  }
+
+  ### allow for a pid file (must be done after backgrounding and chrooting)
+  ### Remove of this pid may fail after a chroot to another location...
+  ### however it doesn't interfere either.
+  if( defined $prop->{pid_file} ){
+    if( eval{ create_pid_file( $prop->{pid_file} ) } ){
+      $prop->{pid_file_unlink} = 1;
+    }else{
+      $self->fatal( $@ );
+    }
   }
 
   ### make sure that allow and deny look like array refs
@@ -231,7 +278,12 @@ sub pre_bind {
   my $self = shift;
   my $prop = $self->{server};
 
-  $self->log(2,$self->log_time ." ". ref($self) ." starting! pid($$)");
+  my $ref   = ref($self);
+  no strict 'refs';
+  my $super = ${"${ref}::ISA"}[0];
+  use strict 'refs';
+  my $ns_type = $ref eq $super ? '' : " (type $super)";
+  $self->log(2,$self->log_time ." ". ref($self) .$ns_type. " starting! pid($$)");
 
   ### set a default port, host, and proto
   if( ! defined( $prop->{port} )
@@ -251,54 +303,35 @@ sub pre_bind {
 
   ### loop through the passed ports
   ### set up parallel arrays of hosts, ports, and protos
-  foreach (@{ $prop->{port} }){
-    if( m|^([\w\.\-\*\/]+):(\w+)/(\w+)$| ){
-      $_ = "$1:$2:$3";
-    }elsif( /^([\w\.\-\*\/]+):(\w+)$/ ){
-      my $proto = $prop->{proto};
-      $_ = "$1:$2:$proto";
-    }elsif( m|^(\w+)/(\w+)$| ){
-      my $host  = $prop->{host};
-      $_ = "$host:$1:$2";
-    }elsif( /^(\w+)$/ ){
-      my $host  = $prop->{host};
-      my $proto = $prop->{proto};
-      $_ = "$host:$1:$proto";
-    }else{
-      $self->fatal("Undeterminate port \"$_\"");
-    }
-    $_ = lc($_);
+  ### port can be any of many types (tcp,udp,unix, etc)
+  ### see perldoc Net::Server::Proto for more information
+  foreach my $port ( @{ $prop->{port} } ){
+    my $obj = $self->proto_object($prop->{host},
+                                  $port,
+                                  $prop->{proto},
+                                  ) || next;
+    push @{ $prop->{sock} }, $obj;
   }
-  if( @{ $prop->{port} } < 1 ){
-    $self->fatal("No valid ports found");
+  if( @{ $prop->{sock} } < 1 ){
+    $self->fatal("No valid socket parameters found");
   }
 
   $prop->{listen} = Socket::SOMAXCONN()
     unless defined($prop->{listen}) && $prop->{listen} =~ /^\d{1,3}$/;
 
-  ### do udp properties if any port is udp
-  foreach( @{ $prop->{port} } ){
-    next unless substr($_,-3) eq 'udp';
-
-    $prop->{udp_recv_len} = 4096
-      unless defined($prop->{udp_recv_len})
-        && $prop->{udp_recv_len} =~ /^\d+$/;
-    
-    $prop->{udp_recv_flags} = 0
-      unless defined($prop->{udp_recv_flags})
-        && $prop->{udp_recv_flags} =~ /^\d+$/;
-
-    last;
-  }
 }
 
+### method for invoking procol specific bindings
+sub proto_object {
+  my $self = shift;
+  my ($host,$port,$proto) = @_;
+  return Net::Server::Proto->object($host,$port,$proto,$self);
+}
 
 ### bind to the port (This should serve all but INET)
 sub bind {
   my $self = shift;
   my $prop = $self->{server};
-
-  ### connect to any ports
 
   ### connect to previously bound ports
   if( exists $ENV{BOUND_SOCKETS} ){
@@ -307,56 +340,36 @@ sub bind {
 
     $self->log(2,"Binding open file descriptors");
 
-    my $i = 0;
-    foreach my $fd ( split(/\|/, $ENV{BOUND_SOCKETS}) ){
+    ### loop through the past information and match things up
+    foreach my $info ( split(/\n/, $ENV{BOUND_SOCKETS}) ){
+      my ($fd,$hup_string) = split(/\|/,$info,2);
       $self->fatal("Bad file descriptor")
         unless $fd =~ /^(\d+)$/;
       $fd = $1;
 
-      $prop->{sock}->[$i] = IO::Socket::INET->new();
-      $prop->{sock}->[$i]->fdopen( $fd, 'w' )
-        or $self->fatal("Error opening to file descriptor ($fd) [$!]");
-      $i++;
+      foreach ( @{ $prop->{sock} } ){
+        if( $hup_string eq $_->hup_string() ){
+          $_->log_connect($self);
+          $_->reconnect( $fd, $self );
+          last;
+        }
+      }
     }
     delete $ENV{BOUND_SOCKETS};
 
   ### connect to fresh ports
   }else{
 
-    my $i = 0;
-    foreach ( @{ $prop->{port} } ){
-      my ($host,$port,$proto) = split /:/;
-      $self->log(2,"Binding to $proto port $port on host $host\n");
-      
-      my %args = ();
-      $args{LocalPort} = $port;
-      $args{Proto}     = $proto;
-      $args{LocalAddr} = $host if $host !~ /\*/;
-
-      if( $proto ne 'udp' ){
-        $args{Listen} = $prop->{listen};
-        $args{Reuse}  = 1;
-      }
-
-      $prop->{sock}->[$i] = IO::Socket::INET->new( %args )
-        or $self->fatal("Can't connect to $proto port $port on $host [$!]");
-
-      $self->fatal("Back sock [$i]!")
-        unless $prop->{sock}->[$i];
-
-      $i++;
+    foreach my $sock ( @{ $prop->{sock} } ){
+      $sock->log_connect($self);
+      $sock->connect( $self );
     }
-  }
 
-  ### make sure we had at least one
-  if( @{ $prop->{sock} } < 1 ){
-    $self->fatal("No valid sockets found");
   }
 
   ### if more than one port we'll need to select on it
-  if( @{ $prop->{sock} } > 1 ){
+  if( @{ $prop->{port} } > 1 || $prop->{multi_port} ){
     $prop->{multi_port} = 1;
-    require "IO/Select.pm";
     $prop->{select} = IO::Select->new();
     foreach ( @{ $prop->{sock} } ){
       $prop->{select}->add( $_ );
@@ -378,6 +391,57 @@ sub post_bind {
   my $self = shift;
   my $prop = $self->{server};
 
+
+  ### figure out the group(s) to run as
+  if( ! defined $prop->{group} ){
+    $self->log(1,"Group Not Defined.  Defaulting to EGID '$)'\n");
+    $prop->{group}  = $);
+  }else{
+    if( $prop->{group} =~ /^(\w+( \w+)*)$/ ){
+      $prop->{group} = eval{ get_gid( $1 ) };
+      $self->fatal( $@ ) if $@;
+    }else{
+      $self->fatal("Invalid group \"$prop->{group}\"");
+    }
+  }
+
+
+  ### figure out the user to run as
+  if( ! defined $prop->{user} ){
+    $self->log(1,"User Not Defined.  Defaulting to EUID '$>'\n");
+    $prop->{user}  = $>;
+  }else{
+    if( $prop->{user} =~ /^(\w+)$/ ){
+      $prop->{user} = eval{ get_uid( $1 ) };
+      $self->fatal( $@ ) if $@;
+    }else{
+      $self->fatal("Invalid user \"$prop->{user}\"");
+    }
+  }
+
+
+  ### chown any files or sockets that we need to
+  if( $prop->{group} ne $) || $prop->{user} ne $> ){
+    my @chown_files = ();
+    foreach my $sock ( @{ $prop->{sock} } ){
+      push @chown_files, $sock->NS_unix_path
+        if$sock->NS_proto eq 'UNIX';
+    }
+    if( $prop->{pid_file_unlink} ){
+      push @chown_files, $prop->{pid_file};
+    }
+    if( $prop->{log_file_unlink} ){
+      push @chown_files, $prop->{log_file};
+    }
+    my $uid = $prop->{user};
+    my $gid = (split(/\ /,$prop->{group}))[0];
+    foreach my $file (@chown_files){
+      chown($uid,$gid,$file)
+        or $self->fatal("Couldn't chown \"$file\" [$!]\n");
+    }
+  }
+
+  
   ### perform the chroot operation
   if( defined $prop->{chroot} ){
     if( ! -d $prop->{chroot} ){
@@ -388,44 +452,21 @@ sub post_bind {
         or $self->fatal("Couldn't chroot to \"$prop->{chroot}\"");
     }
   }
+
   
-  ### become another group
-  if( !defined $prop->{group} ){
-    $self->log(1,"Group Not Defined.  Defaulting to 'nobody'\n");
-    $prop->{group}  = 'nobody';
-  }
-  $self->log(2,"Setting group to $prop->{group}\n");
-  $prop->{group} = getgrnam( $prop->{group} )
-    if $prop->{group} =~ /\D/;
-  $( = $) = $prop->{group};
-
-  ### become another user
-  if( !defined $prop->{user} ){
-    $self->log(1,"User Not Defined.  Defaulting to 'nobody'\n");
-    $prop->{user}  = 'nobody';
-  }
-  $self->log(2,"Setting user to $prop->{user}\n");
-  $prop->{user}  = getpwnam( $prop->{user} )
-    if $prop->{user}  =~ /\D/;
-  $< = $> = $prop->{user};
-
-  ### allow for a pid file (must be done after backgrounding)
-  if( defined $prop->{pid_file} ){
-    $prop->{pid_file_unlink} = undef;
-    unless( $prop->{pid_file} =~ m|^([\w\.\-/]+)$| ){
-      $self->fatal("Unsecure filename \"$prop->{pid_file}\"");
+  ### drop privileges
+  eval{
+    if( $prop->{group} ne $) ){
+      $self->log(2,"Setting gid to \"$prop->{group}\"");
+      set_gid( $prop->{group} );
     }
-    $prop->{pid_file} = $1;
-    $self->log(1,"pid_file \"$prop->{pid_file}\" already exists.  Overwriting.")
-      if -e $prop->{pid_file};
-    if( open(PID, ">$prop->{pid_file}") ){
-      print PID $$;
-      close PID;
-      $prop->{pid_file_unlink} = 1;
-    }else{
-      $self->fatal("Couldn't open pid file \"$prop->{pid_file}\" [$!].");
+    if( $prop->{user} ne $> ){
+      $self->log(2,"Setting uid to \"$prop->{user}\"");
+      set_uid( $prop->{user} );
     }
-  }
+  };
+  $self->fatal( $@ ) if $@;
+
 
   ### record number of request
   $prop->{requests} = 0;
@@ -435,10 +476,6 @@ sub post_bind {
 
   ### most cases, a closed pipe will take care of itself
   $SIG{PIPE} = 'IGNORE';
-
-  ### record warns and dies
-  $SIG{__WARN__} = sub { $self->log(1, $_[0]); warn $_[0]; };
-  $SIG{__DIE__}  = sub { $self->log(0, $_[0]); die  $_[0]; };
 
   ### catch children (mainly for Fork and PreFork but works for any chld)
   $SIG{CHLD} = \&sig_chld;
@@ -486,9 +523,10 @@ sub accept {
 
     ### with more than one port, use select to get the next one
     if( defined $prop->{multi_port} ){
-
+      
       ### anything server type specific
       $sock = $self->accept_multi_port;
+      next unless $sock; # keep trying for the rest of retries
       
       ### last one if HUPed
       return 0 if defined $prop->{_HUP};
@@ -502,20 +540,21 @@ sub accept {
 
     ### make sure we got a good sock
     if( not defined $sock ){
-      $self->fatal("Recieved a bad sock!");
+      $self->fatal("Received a bad sock!");
     }
 
-    ### determine the sock protcol
-    $self->get_sock_protocol( $sock );
-
     ### receive a udp packet
-    if( $prop->{udp_true} ){
+    if( SOCK_DGRAM == $sock->getsockopt(Socket::SOL_SOCKET(),Socket::SO_TYPE()) ){
       $prop->{client}   = $sock;
+      $prop->{udp_true} = 1;
       $prop->{udp_peer} = $sock->recv($prop->{udp_data},
-                                      $prop->{udp_recv_len},
-                                      $prop->{udp_recv_flags});
+                                      $sock->NS_recv_len,
+                                      $sock->NS_recv_flags,
+                                      );
+
     ### blocking accept per proto
     }else{
+      delete $prop->{udp_true};
       $prop->{client} = $sock->accept();
 
     }
@@ -534,30 +573,6 @@ sub accept {
   return undef;
 }
 
-### routine to get the protocol of the socket
-sub get_sock_protocol {
-  my $self = shift;
-  my $sock = shift;
-  my $prop = $self->{server};
-
-  ### need to know what protocol (cache the result)
-  my $fileno = $sock->fileno();
-  if( ! exists $prop->{fn_proto}->{$fileno} ){
-    my $type_no = $sock->getsockopt(Socket::SOL_SOCKET(),Socket::SO_TYPE());
-    if( $type_no == Socket::SOCK_STREAM() ){
-      $prop->{fn_proto}->{$fileno} = 'tcp';
-    }elsif( $type_no == Socket::SOCK_DGRAM() ){
-      $prop->{fn_proto}->{$fileno} = 'udp';
-    }else{
-      ### other socket types (such as unix)
-      ### not sure what we would like to do here
-      ### most of the time, a socket type unix
-      ### will not also be binding tcp or udp
-      $prop->{fn_proto}->{$fileno} = undef;
-    }
-  }
-  $prop->{udp_true} = ($prop->{fn_proto}->{$fileno} eq 'udp');
-}
 
 ### server specific hook for multi port applications
 ### this actually applies to all but INET
@@ -571,6 +586,9 @@ sub accept_multi_port {
 
   ### this will block until a client arrives
   my @waiting = $prop->{select}->can_read();
+
+  ### if no sockets, return failure
+  return undef unless @waiting;
 
   ### choose a socket
   return $waiting[ rand(@waiting) ];
@@ -587,9 +605,6 @@ sub post_accept {
   ### keep track of the requests
   $prop->{requests} ++;
 
-  ### don't do anything for udp
-#  return if $prop->{udp_true};
-
   ### duplicate some handles and flush them
   ### maybe we should save these somewhere - maybe not
   *STDIN  = \*{ $prop->{client} };
@@ -600,11 +615,20 @@ sub post_accept {
 
 }
 
-
 ### read information about the client connection
 sub get_client_info {
   my $self = shift;
   my $prop = $self->{server};
+  my $sock = $prop->{client};
+
+  ### handle unix style connections
+  if( UNIVERSAL::can($sock,'NS_proto') && $sock->NS_proto eq 'UNIX' ){
+    my $path = $sock->NS_unix_path;
+    $self->log(3,$self->log_time
+               ." CONNECT UNIX Socket: \"$path\"\n");
+
+    return;
+  }
 
   ### read information about this connection
   my $sockname = getsockname( STDIN );
@@ -621,7 +645,9 @@ sub get_client_info {
   }
   
   ### try to get some info about the remote host
+  my $proto_type = 'TCP';
   if( $prop->{udp_true} ){
+    $proto_type = 'UDP';
     ($prop->{peerport} ,$prop->{peeraddr})
       = Socket::sockaddr_in( $prop->{udp_peer} );
   }else{
@@ -646,8 +672,8 @@ sub get_client_info {
   }
 
   $self->log(3,$self->log_time
-             ." CONNECT peer: \"$prop->{peeraddr}:$prop->{peerport}\""
-             ." local: \"$prop->{sockaddr}:$prop->{sockport}\"\n");
+             ." CONNECT $proto_type Peer: \"$prop->{peeraddr}:$prop->{peerport}\""
+             ." Local: \"$prop->{sockaddr}:$prop->{sockport}\"\n");
 
 }
 
@@ -659,6 +685,12 @@ sub post_accept_hook {}
 sub allow_deny {
   my $self = shift;
   my $prop = $self->{server};
+  my $sock = $prop->{client};
+
+  ### unix sockets are immune to this check
+  if( UNIVERSAL::can($sock,'NS_proto') && $sock->NS_proto eq 'UNIX' ){
+    return 1;
+  }
 
   ### if no allow or deny parameters are set, allow all
   return 1 unless @{ $prop->{allow} } || @{ $prop->{deny} };
@@ -702,7 +734,7 @@ sub process_request {
       require "Data/Dumper.pm";
       $prop->{client}->send( Data::Dumper::Dumper( $self ) , 0);
     }else{
-      $prop->{client}->send( "You said \"$prop->{udp_data}\"", 0);
+      $prop->{client}->send("You said \"$prop->{udp_data}\"", 0 );
     }
     return;
   }
@@ -723,7 +755,7 @@ sub process_request {
       s/\r?\n$//;
       
       print ref($self),":$$: You said \"$_\"\r\n";
-      $self->log(4,$_); # very verbose log
+      $self->log(5,$_); # very verbose log
       
       if( /get (\w+)/ ){
         print "$1: $self->{server}->{$1}\r\n";
@@ -825,12 +857,12 @@ sub server_close{
   if( defined $prop->{lock_file}
       && -e $prop->{lock_file}
       && defined $prop->{lock_file_unlink} ){
-    unlink $prop->{lock_file};
+    unlink $prop->{lock_file} || warn "Couldn't unlink \"$prop->{lock_file}\" [$!]";
   }
   if( defined $prop->{pid_file}
       && -e $prop->{pid_file} 
       && defined $prop->{pid_file_unlink} ){
-    unlink $prop->{pid_file};
+    unlink $prop->{pid_file} || warn "Couldn't unlink \"$prop->{pid_file}\" [$!]";
   }
 
   ### HUP process
@@ -862,6 +894,10 @@ sub close_children {
     }
 
   }
+
+  ### need to wait off the children
+  ### eventually this should probably use &check_sigs
+  1 while (waitpid(-1,POSIX::WNOHANG()) > 0);
   
 }
 
@@ -890,7 +926,7 @@ sub sig_hup {
     $prop->{_HUP}->[$i]->fcntl( Fcntl::F_SETFD(), my $flags = "" );
 
     ### save host,port,proto, and file descriptor
-    push @fd, $fd;
+    push @fd, $fd .'|'. $sock->hup_string;
 
     ### remove anything that may be blocking
     $sock->close();
@@ -903,7 +939,7 @@ sub sig_hup {
     delete $prop->{select};
   }
 
-  $ENV{BOUND_SOCKETS} = join("|",@fd);
+  $ENV{BOUND_SOCKETS} = join("\n",@fd);
 }
 
 ### restart the server using prebound sockets
@@ -987,7 +1023,7 @@ sub write_to_log_hook {
     # do nothing
   }else{
     my $old = select(STDERR);
-    print $_, "\n";
+    print $_. "\n";
     select($old);
   }
 
@@ -1020,7 +1056,6 @@ sub options {
                host proto listen reverse_lookups
                syslog_logsock syslog_ident
                syslog_logopt syslog_facility
-               udp_recv_len udp_recv_flags
                ) ){
     $ref->{$_} = \$prop->{$_};
   }
@@ -1034,9 +1069,14 @@ sub options {
 sub process_args {
   my $self = shift;
   my $ref  = shift;
-  my $template = {};
-  $self->options( $template );
+  my $template = shift; # allow for custom passed in template
 
+  ### if no template is passed, obtain our own
+  if( ! $template || ! ref($template) ){
+    $template = {}; 
+    $self->options( $template );
+  }
+  
   foreach (my $i=0 ; $i < @$ref ; $i++ ){
 
     if( $ref->[$i] =~ /^(?:--)?(\w+)([=\ ](\S+))?$/
@@ -1059,29 +1099,37 @@ sub process_args {
     }
 
   }
+
 }
 
 
 ### routine for loading conf file parameters
+### cache the args temporarily to handle multiple calls
 sub process_conf {
   my $self = shift;
   my $file = shift;
+  my $template = shift;
+  $template = undef if ! $template || ! ref($template);
   my @args = ();
 
-  $file = ($file =~ m|^([\w\.\-/]+)$|)
-    ? $1 : $self->fatal("Unsecure filename \"$file\"");
+  if( ! $self->{server}->{conf_file_args} ){
+    $file = ($file =~ m|^([\w\.\-/]+)$|)
+      ? $1 : $self->fatal("Unsecure filename \"$file\"");
+    
+    if( not open(_CONF,"<$file") ){
+      $self->fatal("Couldn't open conf \"$file\" [$!]");
+    }
+    
+    while(<_CONF>){
+      push( @args, "$1=$2") if m/^\s*((?:--)?\w+)[=:]?\s*(\S+)/;
+    }
+    
+    close(_CONF);
 
-  if( not open(_CONF,"<$file") ){
-    $self->fatal("Couldn't open conf \"$file\" [$!]");
+    $self->{server}->{conf_file_args} = \@args;
   }
 
-  while(<_CONF>){
-    push( @args, "$1=$2") if m/^\s*((?:--)?\w+)[=:]?\s*(\S+)/;
-  }
-
-  close(_CONF);
-
-  $self->process_args( \@args );
+  $self->process_args( $self->{server}->{conf_file_args}, $template );
 }
 
 
@@ -1121,7 +1169,7 @@ Net::Server - Extensible, general Perl server engine
      #...code...
   }
 
-  MyPackage->run();
+  MyPackage->run(port => 160);
   exit;
 
 =head1 OBTAINING
@@ -1135,7 +1183,7 @@ Visit http://seamons.com/ for the latest version.
  * Preforking Mode
  * Forking Mode
  * Multi port accepts on Single, Preforking, and Forking modes
- * Simultaneous accept/recv on tcp and udp
+ * Simultaneous accept/recv on tcp, udp, and unix sockets
  * User customizable hooks
  * Chroot ability after bind
  * Change of user and group after bind
@@ -1385,8 +1433,8 @@ parameters from the base class.)
 
   log_level         0-4                      2
   log_file          (filename|Sys::Syslog)   undef
-  pid_file          "filename"               undef
 
+  ## syslog parameters
   syslog_logsock    (unix|inet)              unix
   syslog_ident      "identity"               "net_server"
   syslog_logopt     (cons|ndelay|nowait|pid) pid
@@ -1394,21 +1442,23 @@ parameters from the base class.)
 
   port              \d+                      20203
   host              "host"                   "*"
-  proto             "proto"                  "tcp"
+  proto             (tcp|udp|unix)           "tcp"
   listen            \d+                      SOMAXCONN
 
   reverse_lookups   1                        undef
   allow             /regex/                  none
   deny              /regex/                  none
 
+  ## daemonization parameters
+  pid_file          "filename"               undef
   chroot            "directory"              undef
   user              (uid|username)           "nobody"
   group             (gid|group)              "nobody"
   background        1                        undef
   setsid            1                        undef
 
-  udp_recv_len      \d+                      4096
-  udp_recv_flags    \d+                      0
+  ## See Net::Server::Proto::(TCP|UDP|UNIX|etc)
+  ## for more sample parameters.
 
 =over 4
 
@@ -1469,16 +1519,20 @@ See L<Sys::Syslog> and L<syslog>.  Default is "daemon".
 
 =item port
 
-Local port on which to bind.  If low port, process must
+See L<Net::Server::Proto>.
+Local port/socket on which to bind.  If low port, process must
 start as root.  If multiple ports are given, all will be
 bound at server startup.  May be of the form
 C<host:port/proto>, C<host:port>, C<port/proto>, or C<port>,
 where I<host> represents a hostname residing on the local
 box, where I<port> represents either the number of the port
 (eg. "80") or the service designation (eg.  "http"), and
-where I<proto> represents the protocol to be used.  If the
-protocol is not specified, I<proto> will default to the
-C<proto> specified in the arguments.  If C<proto> is not
+where I<proto> represents the protocol to be used.  See
+L<Net::Server::Proto>.  If you are working with unix sockets,
+you may also specify C<socket_file|unix> or
+C<socket_file|type|unix> where type is SOCK_DGRAM or
+SOCK_STREAM.  If the protocol is not specified, I<proto> will
+default to the C<proto> specified in the arguments.  If C<proto> is not
 specified there it will default to "tcp".  If I<host> is not
 specified, I<host> will default to C<host> specified in the
 arguments.  If C<host> is not specified there it will
@@ -1488,17 +1542,19 @@ default to "*".  Default port is 20203.
 
 Local host or addr upon which to bind port.  If a value of '*' is
 given, the server will bind that port on all available addresses
-on the box.  See L<IO::Socket>.
+on the box.  See L<Net::Server::Proto>. See L<IO::Socket>.
 
 =item proto
 
+See L<Net::Server::Proto>.
 Protocol to use when binding ports.  See L<IO::Socket>.  As
-of release 0.60, Net::Server supports tcp and udp.  Other
-types (unix, etc) may work but have not been tested.
+of release 0.70, Net::Server supports tcp, udp, and unix.  Other
+types will need to be added later (or custom modules extending the
+Net::Server::Proto class may be used).
 
 =item listen
 
-  See L<IO::Socket>.  Not used with udp protocol.
+  See L<IO::Socket>.  Not used with udp protocol (or UNIX SOCK_DGRAM).
 
 =item reverse_lookups
 
@@ -1551,16 +1607,6 @@ Defaults to undef.  If a C<log_file> is given or if
 C<setsid> is set, STDIN and STDOUT will automatically be
 opened to /dev/null and STDERR will be opened to STDOUT.
 This will prevent any output from ending up at the terminal.
-
-=item udp_recv_len
-
-Specifies the number of bytes to read from the UDP connection
-handle.  Data will be read into $self->{server}->{udp_data}.
-Default is 4096.  See L<IO::Socket::INET> and L<recv>.
-
-=item udp_recv_flags
-
-See L<recv>.  Default is 0.
 
 =back
 
@@ -1638,6 +1684,7 @@ ignored.
 
   ### ports to bind (this should bind
   ### 127.0.0.1:20205 and localhost:20204)
+  ### See Net::Server::Proto
   host        127.0.0.1
   port        localhost:20204
   port        20205
@@ -1836,7 +1883,7 @@ high hit site.
 
 Explore any other personalities
 
-=item Net::HTTPServer, etc
+=item Net::Server::HTTP, etc
 
 Create various types of servers.  Possibly, port exising
 servers to user Net::Server as a base layer.

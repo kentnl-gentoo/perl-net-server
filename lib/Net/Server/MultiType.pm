@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.15 2001/04/24 13:31:09 rhandom Exp $
+#  $Id: MultiType.pm,v 1.1.1.1 2001/08/08 05:00:47 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com

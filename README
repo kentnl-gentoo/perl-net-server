@@ -12,7 +12,7 @@ SYNOPSIS
          #...code...
       }
 
-      MyPackage->run();
+      MyPackage->run(port => 160);
       exit;
 
 OBTAINING
@@ -24,7 +24,7 @@ FEATURES
      * Preforking Mode
      * Forking Mode
      * Multi port accepts on Single, Preforking, and Forking modes
-     * Simultaneous accept/recv on tcp and udp
+     * Simultaneous accept/recv on tcp, udp, and unix sockets
      * User customizable hooks
      * Chroot ability after bind
      * Change of user and group after bind
@@ -240,8 +240,8 @@ ARGUMENTS
 
       log_level         0-4                      2
       log_file          (filename|Sys::Syslog)   undef
-      pid_file          "filename"               undef
 
+      ## syslog parameters
       syslog_logsock    (unix|inet)              unix
       syslog_ident      "identity"               "net_server"
       syslog_logopt     (cons|ndelay|nowait|pid) pid
@@ -249,21 +249,23 @@ ARGUMENTS
 
       port              \d+                      20203
       host              "host"                   "*"
-      proto             "proto"                  "tcp"
+      proto             (tcp|udp|unix)           "tcp"
       listen            \d+                      SOMAXCONN
 
       reverse_lookups   1                        undef
       allow             /regex/                  none
       deny              /regex/                  none
 
+      ## daemonization parameters
+      pid_file          "filename"               undef
       chroot            "directory"              undef
       user              (uid|username)           "nobody"
       group             (gid|group)              "nobody"
       background        1                        undef
       setsid            1                        undef
 
-      udp_recv_len      \d+                      4096
-      udp_recv_flags    \d+                      0
+      ## See Net::Server::Proto::(TCP|UDP|UNIX|etc)
+      ## for more sample parameters.
 
     conf_file
         Filename from which to read additional key value pair arguments for
@@ -312,31 +314,37 @@ ARGUMENTS
         Sys::Syslog manpage and the syslog manpage. Default is "daemon".
 
     port
-        Local port on which to bind. If low port, process must start as
-        root. If multiple ports are given, all will be bound at server
-        startup. May be of the form `host:port/proto', `host:port',
-        `port/proto', or `port', where *host* represents a hostname residing
-        on the local box, where *port* represents either the number of the
-        port (eg. "80") or the service designation (eg. "http"), and where
-        *proto* represents the protocol to be used. If the protocol is not
-        specified, *proto* will default to the `proto' specified in the
-        arguments. If `proto' is not specified there it will default to
-        "tcp". If *host* is not specified, *host* will default to `host'
-        specified in the arguments. If `host' is not specified there it will
-        default to "*". Default port is 20203.
+        See the Net::Server::Proto manpage. Local port/socket on which to
+        bind. If low port, process must start as root. If multiple ports are
+        given, all will be bound at server startup. May be of the form
+        `host:port/proto', `host:port', `port/proto', or `port', where
+        *host* represents a hostname residing on the local box, where *port*
+        represents either the number of the port (eg. "80") or the service
+        designation (eg. "http"), and where *proto* represents the protocol
+        to be used. See the Net::Server::Proto manpage. If you are working
+        with unix sockets, you may also specify `socket_file|unix' or
+        `socket_file|type|unix' where type is SOCK_DGRAM or SOCK_STREAM. If
+        the protocol is not specified, *proto* will default to the `proto'
+        specified in the arguments. If `proto' is not specified there it
+        will default to "tcp". If *host* is not specified, *host* will
+        default to `host' specified in the arguments. If `host' is not
+        specified there it will default to "*". Default port is 20203.
 
     host
         Local host or addr upon which to bind port. If a value of '*' is
         given, the server will bind that port on all available addresses on
-        the box. See the IO::Socket manpage.
+        the box. See the Net::Server::Proto manpage. See the IO::Socket
+        manpage.
 
     proto
-        Protocol to use when binding ports. See the IO::Socket manpage. As
-        of release 0.60, Net::Server supports tcp and udp. Other types
-        (unix, etc) may work but have not been tested.
+        See the Net::Server::Proto manpage. Protocol to use when binding
+        ports. See the IO::Socket manpage. As of release 0.70, Net::Server
+        supports tcp, udp, and unix. Other types will need to be added later
+        (or custom modules extending the Net::Server::Proto class may be
+        used).
 
     listen
-          See L<IO::Socket>.  Not used with udp protocol.
+          See L<IO::Socket>.  Not used with udp protocol (or UNIX SOCK_DGRAM).
 
     reverse_lookups
         Specify whether to lookup the hostname of the connected IP.
@@ -376,14 +384,6 @@ ARGUMENTS
         a `log_file' is given or if `setsid' is set, STDIN and STDOUT will
         automatically be opened to /dev/null and STDERR will be opened to
         STDOUT. This will prevent any output from ending up at the terminal.
-
-    udp_recv_len
-        Specifies the number of bytes to read from the UDP connection
-        handle. Data will be read into $self->{server}->{udp_data}. Default
-        is 4096. See the IO::Socket::INET manpage and the recv manpage.
-
-    udp_recv_flags
-        See the recv manpage. Default is 0.
 
 PROPERTIES
     All of the `ARGUMENTS' listed above become properties of the server
@@ -452,6 +452,7 @@ CONFIGURATION FILE
 
       ### ports to bind (this should bind
       ### 127.0.0.1:20205 and localhost:20204)
+      ### See Net::Server::Proto
       host        127.0.0.1
       port        localhost:20204
       port        20205
@@ -613,7 +614,7 @@ TO DO
     Other Personalities
         Explore any other personalities
 
-    Net::HTTPServer, etc
+    Net::Server::HTTP, etc
         Create various types of servers. Possibly, port exising servers to
         user Net::Server as a base layer.
 

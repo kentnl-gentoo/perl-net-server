@@ -2,7 +2,7 @@
 #
 #  Net::Server::INET - Net::Server personality
 #  
-#  $Id: INET.pm,v 1.18 2001/05/01 06:41:14 rhandom Exp $
+#  $Id: INET.pm,v 1.3 2001/08/14 17:15:46 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -39,16 +39,16 @@ sub accept {
   my $self = shift;
   my $prop = $self->{server};
 
-  ### need to determine how to pass this
-#  $self->get_sock_protocol( *STDIN );
-
+  ### Net::Server::INET will not do any determination of TCP,UDP,Unix
+  ### it is up to the programmer to keep these as separate processes
+  delete $prop->{udp_true};
   ### receive a udp packet
-  if( $prop->{udp_true} ){
-    $prop->{client}   = *STDIN;
-    $prop->{udp_peer} = STDIN->recv($prop->{udp_data},
-                                    $prop->{udp_packet_size},
-                                    $prop->{udp_packet_offset});
-  }
+#  if( $prop->{udp_true} ){
+#    $prop->{client}   = *STDIN;
+#    $prop->{udp_peer} = STDIN->recv($prop->{udp_data},
+#                                    $prop->{udp_packet_size},
+#                                    $prop->{udp_packet_offset});
+#  }
 
   1;
 }
@@ -94,6 +94,10 @@ sub new {
   bless \*HAND, $class;
   return \*HAND;
 }  
+
+sub NS_proto {
+  return '';
+}
 
 ### tied handle methods
 sub TIEHANDLE {

@@ -1,5 +1,75 @@
 Revision history for Perl extension Net::Server.
 
+0.75  Aug 23 10:49
+        - Both Net::Server::Fork and Net::Server::PreFork are
+                using safe signals via Net::Server::SIG.
+        - Net::Server::PreFork has new child managment model.
+                NOTE: spare_servers is no longer used.  It
+                has been replaced by min_spare_servers and
+                max_spare_servers.  This is a major change.
+                The server will die if these parameters are
+                not properly set.
+                - operates better under high loads
+                - provides better clean up of waiting servers.
+                - more configurable.
+                - Read the perldoc for updates.
+        - Net::Server::Fork and Net::Server::PreFork HUP
+                properly again.
+        - t/Server_PreFork.t and t/Server_Fork.t execute
+                properly.
+        - Fix in Multiport accept with signals.
+        - Updated perldocs
+                
+
+0.73  Aug 21 17:06
+        - Net::Server::PreFork is on safe signals.
+
+0.72  Aug 21 16:22 2001
+        - Beginning work on Safe signals
+        - Net::Server::Fork is on safe signals.
+        - Added Net::Server::SIG
+        - Added examples/sigtest.pl
+
+0.71  Aug 17 15:51 2001
+        - Die on failed change to another user or group.
+            WARNING: No longer defaults to nobody.nobody.
+            Defaults to currently running user and group.
+        - Various cleanups with file removal.
+        - All files to be removed are now chowned.
+
+0.70  Aug 17 10:34 2001
+
+        - Added support for different protocols to Net::Server.
+            This implemented via Net::Server::Proto and its classes.
+            Included Net::Server::Proto::TCP,
+                Net::Server::Proto::UDP,
+                Net::Server::Proto::UNIX,
+                and experimental Net::Server::Proto::SSL.
+            TCP, UDP, and UNIX are fully tested.
+
+        - Added Net::Server::Daemonize.
+        - Allows for modular daemonization/forking routines.
+
+        - Allowed for configure to be called multiple times.
+            Configure method can be called at later times during
+            server startup.  Arguments are cached.  This allows
+            new protocols to add arguments without modification
+            to Net::Server base class.
+
+        - Updated perldocs.
+            No more protocol specific information in central perldoc.
+            More information on new protocol layout.
+
+        - Added t/UNIX_test.t
+        - Added examples/connection_test.pl
+
+        - UNIX, UDP, and TCP types are fully operational.
+            Server can bind to all three types.
+            Properties are determined according to type.
+            Server can HUP on all three types.
+ 
+        - SSL type added, but experimental (read "extremely alpha")
+
 0.65  Jul 05 22:01 2001
         - Modified test suite to no longer depend upon
                 hard coded ports.  Improves test reliability

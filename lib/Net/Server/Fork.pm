@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #  
-#  $Id: Fork.pm,v 1.20 2001/03/30 07:08:19 rhandom Exp $
+#  $Id: Fork.pm,v 1.4 2001/08/22 18:29:59 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -21,13 +21,30 @@ package Net::Server::Fork;
 
 use strict;
 use vars qw($VERSION @ISA);
-use Net::Server;
+use Net::Server ();
+use Net::Server::SIG qw(register_sig check_sigs);
+use Socket qw(SO_TYPE SOL_SOCKET SOCK_DGRAM);
+use POSIX qw(WNOHANG);
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
 ### fall back to parent methods
 @ISA = qw(Net::Server);
 
+
+### override-able options for this package
+sub options {
+  my $self = shift;
+  my $prop = $self->{server};
+  my $ref  = shift;
+
+  $self->SUPER::options($ref);
+
+  foreach ( qw(max_servers check_for_dead) ){
+    $prop->{$_} = undef unless exists $prop->{$_};
+    $ref->{$_} = \$prop->{$_};
+  }
+}
 
 ### make sure some defaults are set
 sub post_configure {
@@ -37,12 +54,20 @@ sub post_configure {
   ### let the parent do the rest
   $self->SUPER::post_configure;
 
+  ### what are the max number of processes
+  $prop->{max_servers} = 256
+    unless defined $prop->{max_servers};
+
   ### how often to see if children are alive
-  $prop->{check_for_dead} = 30
+  ### only used when max_servers is reached
+  $prop->{check_for_dead} = 60
     unless defined $prop->{check_for_dead};
 
   ### I need to know who is the parent
   $prop->{ppid} = $$;
+
+  ### let the post bind set up a select handle for us
+  $prop->{multi_port} = 1;
 
 }
 
@@ -55,42 +80,108 @@ sub loop {
   ### get ready for children
   $prop->{children} = {};
 
-  my $last_checked_for_dead = time;
+  ### register some of the signals for safe handling
+  register_sig(PIPE => 'IGNORE',
+               INT  => sub { $self->server_close() },
+               TERM => sub { $self->server_close() },
+               QUIT => sub { $self->server_close() },
+               HUP  => sub { $self->sig_hup() },
+               CHLD => sub {
+                 while ( defined(my $chld = waitpid(-1, WNOHANG)) ){
+                   last unless $chld > 0;
+                   delete $prop->{children}->{$chld};
+                 }
+               },
+               );
 
   ### this is the main loop
-  while( $self->accept ){
+  while( 1 ){
 
+    my $last_checked_for_dead = time();
+
+    ### make sure we don't use too many processes
+    while ((keys %{ $prop->{children} }) > $prop->{max_servers}){
+
+      ### block for a moment (don't look too often)
+      select(undef,undef,undef,5);
+      &check_sigs();
+
+      ### periodically see which children are alive
+      my $time = time();
+      if( $time - $last_checked_for_dead > $prop->{check_for_dead} ){
+        $last_checked_for_dead = $time;
+        foreach (keys %{ $prop->{children} }){
+          ### see if the child can be killed
+          kill(0,$_) or delete $prop->{children}->{$_};
+        }
+      }
+    }
+
+    
+    ### try to call accept
+    if( ! $self->accept() ){
+      last if $prop->{_HUP};
+      next;
+    }
+    
+    ### fork a child so the parent can go back to listening
     my $pid = fork;
-      
+    
     ### trouble
     if( not defined $pid ){
       $self->log(1,"Bad fork [$!]");
       sleep(5);
-        
+      
     ### parent
     }elsif( $pid ){
-
-      close($prop->{client});
+      close($prop->{client}) if ! $prop->{udp_true};
       $prop->{children}->{$pid} = time;
-        
+      
     ### child
     }else{
-
       $self->run_client_connection;
       exit;
-
+      
     }
+    
+  }
 
-    ### periodically see which children are alive
-    my $time = time;
-    if( $time - $last_checked_for_dead > $prop->{check_for_dead} ){
-      $last_checked_for_dead = $time;
-      foreach (keys %{ $prop->{children} }){
-        ### see if the child can be killed
-        kill(0,$_) or delete $prop->{children}->{$_};
-      }
-    }
+  ### fall back to the main run routine
+}
 
+### Net::Server::Fork's own accept method which
+### takes advantage of safe signals
+sub accept {
+  my $self = shift;
+  my $prop = $self->{server};
+
+  ### block on trying to get a handle, timeout on 10 seconds
+  my(@socks) = $prop->{select}->can_read(10);
+  
+  ### see if any sigs occured
+  if( &check_sigs() ){
+    return undef if $prop->{_HUP};
+    return undef unless @socks; # don't continue unless we have a connection
+  }
+
+  ### choose one at random (probably only one)
+  my $sock = $socks[rand @socks];
+  return undef unless defined $sock;
+  
+  ### check if this is UDP
+  if( SOCK_DGRAM == $sock->getsockopt(SOL_SOCKET,SO_TYPE) ){
+    $prop->{udp_true} = 1;
+    $prop->{client}   = $sock;
+    $prop->{udp_true} = 1;
+    $prop->{udp_peer} = $sock->recv($prop->{udp_data},
+                                    $sock->NS_recv_len,
+                                    $sock->NS_recv_flags);
+    
+  ### Receive a SOCK_STREAM (TCP or UNIX) packet
+  }else{
+    delete $prop->{udp_true};
+    $prop->{client} = $sock->accept();
+    return undef unless defined $prop->{client};
   }
 }
 
@@ -103,8 +194,9 @@ sub run_client_connection {
   ### to HUP the parent at any time
   $_ = undef foreach @{ $self->{server}->{sock} };
 
-  ### restore sigs (turn off warnings during)
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = 'DEFAULT';
+  ### restore sigs (for the child)
+  $SIG{HUP} = $SIG{CHLD} = $SIG{PIPE}
+     = $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = 'DEFAULT';
 
   $self->SUPER::run_client_connection;
 
@@ -148,7 +240,7 @@ Net::Server::Fork - Net::Server personality
      #...code...
   }
 
-  Net::Server::Fork->run();
+  __PACKAGE__->run();
 
 =head1 DESCRIPTION
 
@@ -163,8 +255,21 @@ and then closes.
 
 =head1 ARGUMENTS
 
-There are no additional arguments beyond the Net::Server
-base class.
+=over 4
+
+=item check_for_dead
+
+Number of seconds to wait before looking for dead children.
+This only takes place if the maximum number of child processes
+(max_servers) has been reached.  Default is 60 seconds.
+
+=item max_servers
+
+The maximum number of children to fork.  The server will
+not accept connections until there are free children. Default
+is 256 children.
+
+=back
 
 =head1 CONFIGURATION FILE
 

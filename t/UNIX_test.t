@@ -1,10 +1,12 @@
 BEGIN { $| = 1; print "1..5\n"; }
 
+
 ### load the module
 END {print "not ok 1\n" unless $loaded;}
-use Net::Server::Fork;
+use Net::Server;
 $loaded = 1;
 print "ok 1\n";
+
 
 ### test fork - don't care about platform
 my $fork = 0;
@@ -17,12 +19,18 @@ eval {
 };
 print "not ok 2\n" if $@;
 
+
 ### become a new type of server
 package Net::Server::Test;
-@ISA = qw(Net::Server::Fork);
-use IO::Socket;
-local $SIG{ALRM} = sub { die };
+@ISA = qw(Net::Server);
+
+use IO::Socket ();
+use POSIX qw(tmpnam);
+use English qw($UID $GID);
+
+local $SIG{ALRM} = sub { die "timeout"; };
 my $alarm = 15;
+
 
 ### test and setup pipe
 local *READ;
@@ -51,7 +59,7 @@ print "not ok 3\n" if $@;
 ### coded ports.  Each of the server tests
 ### will use it's own unique ports to avoid
 ### reuse problems on some systems.
-my $start_port = 20200;
+my $start_port = 20700;
 my $num_ports  = 1;
 my @ports      = ();
 for my $i (0..99){
@@ -79,12 +87,14 @@ sub accept {
   return $self->SUPER::accept();
 }
 
+
 ### start up a vanilla server and connect to it
 if( $fork && $pipe ){
 
   eval {
     alarm $alarm;
 
+    my $socket_file = tmpnam; # must do before fork
     my $pid = fork;
 
     ### can't proceed unless we can fork
@@ -95,15 +105,23 @@ if( $fork && $pipe ){
 
       <READ>; ### wait until the child writes to us
 
-      ### connect to child
-      my $remote = IO::Socket::INET->new(PeerAddr => 'localhost',
-                                         PeerPort => $ports[0],
-                                         Proto    => 'tcp');
-      die unless defined $remote;
+      ### connect to child under unix
+      my $remote = IO::Socket::UNIX->new(Peer => $socket_file);
+      die "No socket returned [$!]" unless defined $remote;
 
       ### sample a line
       my $line = <$remote>;
-      die unless $line =~ /Net::Server/;
+      die "No line returned" unless $line =~ /Net::Server/;
+
+      ### connect to child under tcp
+      $remote = IO::Socket::INET->new(PeerAddr => 'localhost',
+                                      PeerPort => $ports[0],
+                                      Proto    => 'tcp');
+      die "No socket returned [$!]" unless defined $remote;
+
+      ### sample a line
+      $line = <$remote>;
+      die "No line returned" unless $line =~ /Net::Server/;
 
       ### shut down the server
       print $remote "exit\n";
@@ -112,20 +130,27 @@ if( $fork && $pipe ){
     ### child does the server
     }else{
 
+      ### start the server
       close STDERR;
-      Net::Server::Test->run(port => $ports[0],
-                             setsid => 1,
+      Net::Server::Test->run(port  => "$ports[0]/tcp",
+                             port  => "$socket_file|unix",
+                             user  => $UID, # user  accepts id as well
+                             group => $GID, # group accepts id as well
                              );
+      # we need to set the user and group to ourself so that
+      # the parent process can connect to the socket we opened
+
+      unlink $socket_file;
       exit;
 
     }
 
     alarm 0;
   };
+
   print "not ok 5\n" if $@;
 
 }else{
   print "not ok 5\n";
 }
-
 
