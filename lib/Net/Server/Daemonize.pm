@@ -2,7 +2,7 @@
 #
 #  Net::Server::Daemonize - bdpf - Daemonization utilities.
 #  
-#  $Id: Daemonize.pm,v 1.5 2001/08/17 21:50:55 rhandom Exp $
+#  $Id: Daemonize.pm,v 1.6 2001/08/24 16:31:44 rhandom Exp $
 #  
 #  Copyright (C) 2001, Jeremy Howard
 #                      j+daemonize@howard.fm
@@ -225,8 +225,8 @@ sub set_gid {
 ### backward compatibility sub
 sub set_user {
   my ($user, @group) = @_;
-  set_uid( $user )  || return undef;
   set_gid( @group ) || return undef;
+  set_uid( $user )  || return undef;
   return 1;
 }
 

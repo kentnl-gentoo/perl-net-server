@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #  
-#  $Id: SSL.pm,v 1.2 2001/08/17 16:46:27 rhandom Exp $
+#  $Id: SSL.pm,v 1.3 2001/08/24 18:26:56 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -153,8 +153,8 @@ sub hup_string {
 sub show {
   my $sock = shift;
   my $t = "Ref = \"" .ref($sock) . "\"\n";
-  foreach ( qw(NS_proto NS_port NS_host) ){
-    $t .= "  $_ = \"" .$sock->$_."\"\n";
+  foreach my $prop ( qw(NS_proto NS_port NS_host) ){
+    $t .= "  $prop = \"" .$sock->$prop()."\"\n";
   }
   return $t;
 }

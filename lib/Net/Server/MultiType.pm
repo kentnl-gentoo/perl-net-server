@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.1.1.1 2001/08/08 05:00:47 rhandom Exp $
+#  $Id: MultiType.pm,v 1.2 2001/08/24 17:42:44 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -161,7 +161,7 @@ that personality
 
 =head1 CONFIGURATION FILE
 
-C<Net::Server::PreFork> allows for the use of a
+C<Net::Server::MultiType> allows for the use of a
 configuration file to read in server parameters.  The format
 of this conf file is simple key value pairs.  Comments and
 white space are ignored.

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::UNIX - Net::Server Protocol module
 #  
-#  $Id: UNIX.pm,v 1.5 2001/08/17 15:52:27 rhandom Exp $
+#  $Id: UNIX.pm,v 1.6 2001/08/24 18:26:56 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -172,8 +172,8 @@ sub hup_string {
 sub show {
   my $sock = shift;
   my $t = "Ref = \"" .ref($sock) . "\"\n";
-  foreach ( qw(NS_proto NS_unix_path NS_unix_type) ){
-    $t .= "  $_ = \"" .$sock->$_."\"\n";
+  foreach my $prop ( qw(NS_proto NS_unix_path NS_unix_type) ){
+    $t .= "  $prop = \"" .$sock->$prop()."\"\n";
   }
   $t =~ s/"1"/SOCK_STREAM/;
   $t =~ s/"2"/SOCK_DGRAM/;
