@@ -1,0 +1,33 @@
+Revision history for Perl extension Net::Server.
+
+0.46  Mar 05 07:37 2001
+	- secure removal of pid_file - only happens on success -
+                possibly should only happen after process has become
+                another user
+        - secure removal of lock_file - only happens if we generated it
+        - added child_init_hook and child_finish_hook to PreFork
+        - changed pre_configure_hook to configure_hook
+        - added simple httpd example script
+
+0.45  Mar 02 00:44 2001
+	- clean up make process.
+        - change version to hard coded number.
+        - improve testing scripts
+
+0.44  Mar 01 00:55 2001
+	- partitioned properties in single hashref value.
+        - changed versioning system to use cvs revision.
+        - general clean up and add documentation.
+
+0.43  Feb 28 01:08 2001
+	- this revision and last add bulk of documentation.
+        -various clean ups
+
+0.4.1  Feb 26 17:48 2001
+        - first build.  Up to this point many revisions, bug fixes
+                and optimizations had been made.
+
+0.1.0  Feb 08 06:28 2001
+        - first cvs check in.  Up to this point, much thought and
+                research had gone into the server.
+
