@@ -2,7 +2,7 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.2 2001/10/24 15:57:32 hookbot Exp $
+#  $Id: Multiplex.pm,v 1.3 2001/11/14 16:21:36 hookbot Exp $
 #
 #  Copyright (C) 2001, Rob Brown <rob@roobik.com>
 #
@@ -192,8 +192,9 @@ sub mux_eof {
   my $self = shift;
   my $mux  = shift;
   my $fh   = shift;
+  my $in_ref = shift;  # Scalar reference to the input
   $self->_link_stdout($mux, $fh);
-  $self->SUPER::mux_eof($mux, $fh);
+  $self->SUPER::mux_eof($mux, $fh, $in_ref);
   $self->_unlink_stdout();
   $mux->shutdown($fh, 1);
   return;

@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.28 2001/10/24 15:38:13 hookbot Exp $
+#  $Id: Server.pm,v 1.29 2001/11/14 16:47:29 hookbot Exp $
 #
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -34,7 +34,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.79';
+$VERSION = '0.80';
 
 ### program flow
 sub run {
