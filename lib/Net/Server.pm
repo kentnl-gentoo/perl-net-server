@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.29 2001/11/14 16:47:29 hookbot Exp $
+#  $Id: Server.pm,v 1.30 2001/11/19 19:47:20 rhandom Exp $
 #
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -34,7 +34,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.80';
+$VERSION = '0.81';
 
 ### program flow
 sub run {
@@ -1209,6 +1209,7 @@ Visit http://seamons.com/ for the latest version.
  * Multiplexing Mode using a single process
  * Multi port accepts on Single, Preforking, and Forking modes
  * Simultaneous accept/recv on tcp, udp, and unix sockets
+ * Safe signal handling in Fork/PreFork avoids perl signal trouble
  * User customizable hooks
  * Chroot ability after bind
  * Change of user and group after bind

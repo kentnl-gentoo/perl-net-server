@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.2 2001/08/24 17:42:44 rhandom Exp $
+#  $Id: MultiType.pm,v 1.3 2001/11/19 19:47:20 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -218,18 +218,6 @@ There are no additional hooks in Net::Server::MultiType.
 =head1 TO DO
 
 See L<Net::Server>
-
-=head1 FILES
-
-  The following files are installed as part of this
-  distribution.
-
-  Net/Server.pm
-  Net/Server/Fork.pm
-  Net/Server/INET.pm
-  Net/Server/MultiType.pm
-  Net/Server/PreFork.pm
-  Net/Server/Single.pm
 
 =head1 AUTHOR
 

@@ -2,7 +2,7 @@
 #
 #  Net::Server::INET - Net::Server personality
 #  
-#  $Id: INET.pm,v 1.3 2001/08/14 17:15:46 rhandom Exp $
+#  $Id: INET.pm,v 1.4 2001/11/19 19:47:20 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -214,18 +214,6 @@ There are no additional hooks in Net::Server::INET.
 =head1 TO DO
 
 See L<Net::Server>
-
-=head1 FILES
-
-  The following files are installed as part of this
-  distribution.
-
-  Net/Server.pm
-  Net/Server/Fork.pm
-  Net/Server/INET.pm
-  Net/Server/MultiType.pm
-  Net/Server/PreFork.pm
-  Net/Server/Single.pm
 
 =head1 AUTHOR
 

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #  
-#  $Id: Fork.pm,v 1.6 2001/10/02 15:35:09 rhandom Exp $
+#  $Id: Fork.pm,v 1.7 2001/11/19 19:47:20 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -112,11 +112,13 @@ sub loop {
       my $time = time();
       if( $time - $last_checked_for_dead > $prop->{check_for_dead} ){
         $last_checked_for_dead = $time;
+        $self->log(2,"Max number of children reached ($prop->{max_servers}) -- checking for alive.");
         foreach (keys %{ $prop->{children} }){
           ### see if the child can be killed
           kill(0,$_) or delete $prop->{children}->{$_};
         }
       }
+      $n_children = grep { !/dequeue/ } (values %{ $prop->{children} });
     }
 
     ### periodically check to see if we should clear a queue
@@ -135,6 +137,7 @@ sub loop {
     }
 
     ### try to call accept
+    ### accept will check signals as appropriate
     if( ! $self->accept() ){
       last if $prop->{_HUP};
       next;
@@ -299,18 +302,6 @@ There are no additional hooks in Net::Server::Fork.
 
 See L<Net::Server>
 
-=head1 FILES
-
-  The following files are installed as part of this
-  distribution.
-
-  Net/Server.pm
-  Net/Server/Fork.pm
-  Net/Server/INET.pm
-  Net/Server/MultiType.pm
-  Net/Server/PreFork.pm
-  Net/Server/Single.pm
-
 =head1 AUTHOR
 
 Paul T. Seamons paul@seamons.com
@@ -322,6 +313,7 @@ L<Net::Server::Fork>,
 L<Net::Server::INET>,
 L<Net::Server::PreFork>,
 L<Net::Server::MultiType>,
+L<Net::Server::SIG>
 L<Net::Server::Single>
 
 =cut
