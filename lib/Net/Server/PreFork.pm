@@ -2,11 +2,13 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #
-#  $Id: PreFork.pm,v 1.15 2003/03/06 18:27:03 hookbot Exp $
+#  $Id: PreFork.pm,v 1.17 2004/02/15 05:52:50 hookbot Exp $
 #
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
 #                      http://seamons.com/
+#
+#  Copyright (C) 2003-2004, Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -110,6 +112,7 @@ sub loop {
 
   ### get ready for child->parent communication
   pipe(_READ,_WRITE);
+  _WRITE->autoflush(1); # ASAP, before first child is ever forked
   $prop->{_READ}  = *_READ;
   $prop->{_WRITE} = *_WRITE;
 

@@ -2,7 +2,7 @@
 #
 #  Net::Server - bdpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.52 2003/11/06 19:56:48 hookbot Exp $
+#  $Id: Server.pm,v 1.53 2003/11/06 20:36:22 hookbot Exp $
 #
 #  Copyright (C) 2001-2003
 #    Paul T Seamons (paul at seamons.com)
@@ -35,7 +35,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.86';
+$VERSION = '0.87';
 
 ### program flow
 sub run {
