@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #  
-#  $Id: Server.pm,v 1.69 2001/03/05 14:39:36 rhandom Exp $
+#  $Id: Server.pm,v 1.72 2001/03/08 14:02:23 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -20,11 +20,11 @@ package Net::Server;
 
 use strict;
 use vars qw($VERSION);
-use Socket qw( inet_ntoa unpack_sockaddr_in AF_INET );
+use Socket qw( inet_aton inet_ntoa unpack_sockaddr_in AF_INET );
 use IO::Socket ();
 
 
-$VERSION = 0.46;
+$VERSION = 0.47;
 
 ### program flow
 sub run {
@@ -434,7 +434,7 @@ sub get_client_info {
     $prop->{peeraddr} = inet_ntoa( $prop->{peeraddr} );
 
     if( defined $prop->{reverse_lookups} ){
-      $prop->{peerhost} = gethostbyaddr( $prop->{peeraddr}, AF_INET );
+      $prop->{peerhost} = gethostbyaddr( inet_aton($prop->{peeraddr}), AF_INET );
     }
     $prop->{peerhost} = '' unless defined $prop->{peerhost};
 
@@ -460,7 +460,7 @@ sub allow_deny {
   my $self = shift;
   my $prop = $self->{server};
 
-  ### if not allow or deny parameters are set, allow all
+  ### if no allow or deny parameters are set, allow all
   return 1 unless @{ $prop->{allow} } || @{ $prop->{deny} };
 
   ### if the addr or host matches a deny, reject it immediately
@@ -649,7 +649,7 @@ sub options {
   foreach ( qw(conf_file
                user group chroot log_level
                log_file pid_file background
-               host proto listen) ){
+               host proto listen reverse_lookups) ){
     $prop->{$_} = undef unless exists $prop->{$_};
     $ref->{$_} = \$prop->{$_};
   }
@@ -736,6 +736,8 @@ Net::Server - Extensible, general Perl server engine
 
 =head1 SYNOPSIS
 
+  package MyPackage;
+
   use Net::Server;
   @ISA = qw(Net::Server);
 
@@ -743,7 +745,7 @@ Net::Server - Extensible, general Perl server engine
      #...code...
   }
 
-  Net::Server->run();
+  MyPackage->run();
 
 =head1 FEATURES
 
@@ -873,10 +875,6 @@ C<Net::Server> can, or will, be included with this distribution).
   #!/usr/bin/perl -w -T
   #--------------- file test.pl ---------------
 
-  MyPackage->run();
-  exit;
-
-
   package MyPackage;
 
   use strict;
@@ -884,6 +882,11 @@ C<Net::Server> can, or will, be included with this distribution).
   use Net::Server::PreFork; # any personality will do
 
   @ISA = qw(Net::Server::PreFork);
+
+  MyPackage->run();
+  exit;
+
+  ### over-ridden subs below
 
   sub process_request {
     my $self = shift;
@@ -924,7 +927,7 @@ attacks.
 There are four possible ways to pass arguments to
 Net::Server.  They are I<passing on command line>, I<using a
 conf file>, I<passing parameters to run>, or I<using a
-prebuilt object to call the run method>.
+pre-built object to call the run method>.
 
 Arguments consist of key value pairs.  On the commandline
 these pairs follow the POSIX fashion of C<--key value> or
@@ -995,23 +998,24 @@ parameters from the base class.)
 =item conf_file
 
 Filename from which to read additional key value pair arguments
-for starting the server.
+for starting the server.  Default is undef.
 
 =item log_level
 
 Ranges from 0 to 5 in level.  Specifies what level of error
 will be logged.  "O" means logging is off.  "5" means very
-verbose.
+verbose.  These levels should be able to correlate to syslog
+levels.  Default is 1.
 
 =item log_file
 
 Name of log file to be written to.  If no name is given and 
-hook is not overridden, log goes to STDERR.
+hook is not overridden, log goes to STDERR.  Default is undef.
 
 =item pid_file
 
 Filename to store pid of parent process.  Generally applies
-only to forking servers.  Default is none.
+only to forking servers.  Default is none (undef).
 
 =item port
 
@@ -1021,20 +1025,21 @@ server startup.  May be of the form C<host:port/proto>,
 C<host:port>, or C<port>, where I<host> represents a hostname
 residing on the local box, where I<port> represents either the
 number of the port (eg. "80") or the service designation (eg.
-"http"), and where I<proto> represents the protocal to be used.
+"http"), and where I<proto> represents the protocol to be used.
 If the protocol is not specified, I<proto> will default to the 
 C<proto> specified in the arguments.  If C<proto> is not specified
 there it will default to "tcp".  If I<host> is not specified, 
 I<host> will default to C<host> specified in the arguments.  If 
 C<host> is not specified there it will default to "localhost".
+Default port is 20203.
 
 =item host
 
-Local host or addr upon which to bind port.
+Local host or addr upon which to bind port.  See L<IO::Socket>.
 
 =item proto
 
-Protocol to use when binding ports.
+Protocol to use when binding ports.  See L<IO::Socket>.
 
 =item listen
 
@@ -1044,7 +1049,7 @@ Protocol to use when binding ports.
 
 Specify whether to lookup the hostname of the connected IP.
 Information is cached in server object under C<peerhost>
-property.  Default is to not use reverse_lookups.
+property.  Default is to not use reverse_lookups (undef).
 
 =item allow/deny
 
@@ -1052,12 +1057,14 @@ May be specified multiple times.  Contains regex to compare
 to incoming peeraddr or peerhost (if reverse_lookups has
 been enabled).  If allow or deny options are given, the
 incoming client must match an allow and not match a deny or
-the client connection will be close.
+the client connection will be closed.  Defaults to empty
+array refs.
 
 =item chroot
 
 Directory to chroot to after bind process has taken place
-and the server is still possibly running as root.
+and the server is still running as root.  Defaults to 
+undef.
 
 =item user
 
@@ -1076,7 +1083,8 @@ equal to "root".
 =item background
 
 Specifies whether or not the server should fork after the
-bind release itself from the command line.
+bind method to release itself from the command line.
+Defaults to undef.
 
 =back
 
@@ -1117,7 +1125,7 @@ consists of the following methods:
 
 Properties are allowed to be changed at any time with
 caution (please do not undef the sock property or you will
-close the client connection.
+close the client connection).
 
 =head1 CONFIGURATION FILE
 
@@ -1145,7 +1153,8 @@ ignored.
   ### background the process?
   background  1
 
-  ### ports to bind
+  ### ports to bind (this should bind
+  ### 127.0.0.1:20205 and localhost:20204)
   host        127.0.0.1
   port        localhost:20204
   port        20205
@@ -1370,6 +1379,13 @@ Do better tests during "make test"
 =head1 AUTHOR
 
 Paul T. Seamons paul@seamons.com
+
+=head1 THANKS
+
+Thanks to Rob Brown for help with miscellaneous concepts
+such as tracking down the serialized select via flock ala
+Apache.  Thanks to Jonathan J. Miner for patching a blatant
+problem in the reverse lookups.
 
 =head1 SEE ALSO
 

@@ -1,5 +1,11 @@
 Revision history for Perl extension Net::Server.
 
+0.47  Mar 05 07:37 2001
+        - Fix reverse lookup bug - thanks to Jonathan J. Miner for 
+                pointing out the missing pieces.
+        - Cleaned up pod examples
+        - Clarified some of the pod
+
 0.46  Mar 05 07:37 2001
 	- secure removal of pid_file - only happens on success -
                 possibly should only happen after process has become

@@ -2,6 +2,8 @@ NAME
     Net::Server - Extensible, general Perl server engine
 
 SYNOPSIS
+      package MyPackage;
+
       use Net::Server;
       @ISA = qw(Net::Server);
 
@@ -9,7 +11,7 @@ SYNOPSIS
          #...code...
       }
 
-      Net::Server->run();
+      MyPackage->run();
 
 FEATURES
      * Single Server Mode
@@ -115,9 +117,6 @@ SAMPLE
       #!/usr/bin/perl -w -T
       #--------------- file test.pl ---------------
 
-      MyPackage->run();
-      exit;
-
       package MyPackage;
 
       use strict;
@@ -125,6 +124,11 @@ SAMPLE
       use Net::Server::PreFork; # any personality will do
 
       @ISA = qw(Net::Server::PreFork);
+
+      MyPackage->run();
+      exit;
+
+      ### over-ridden subs below
 
       sub process_request {
         my $self = shift;
@@ -162,7 +166,7 @@ SAMPLE
 ARGUMENTS
     There are four possible ways to pass arguments to Net::Server. They are
     *passing on command line*, *using a conf file*, *passing parameters to
-    run*, or *using a prebuilt object to call the run method*.
+    run*, or *using a pre-built object to call the run method*.
 
     Arguments consist of key value pairs. On the commandline these pairs
     follow the POSIX fashion of `--key value' or `--key=value', and also
@@ -227,19 +231,20 @@ ARGUMENTS
 
     conf_file
         Filename from which to read additional key value pair arguments for
-        starting the server.
+        starting the server. Default is undef.
 
     log_level
         Ranges from 0 to 5 in level. Specifies what level of error will be
-        logged. "O" means logging is off. "5" means very verbose.
+        logged. "O" means logging is off. "5" means very verbose. These
+        levels should be able to correlate to syslog levels. Default is 1.
 
     log_file
         Name of log file to be written to. If no name is given and hook is
-        not overridden, log goes to STDERR.
+        not overridden, log goes to STDERR. Default is undef.
 
     pid_file
         Filename to store pid of parent process. Generally applies only to
-        forking servers. Default is none.
+        forking servers. Default is none (undef).
 
     port
         Local port on which to bind. If low port, process must start as
@@ -248,18 +253,19 @@ ARGUMENTS
         `port', where *host* represents a hostname residing on the local
         box, where *port* represents either the number of the port (eg.
         "80") or the service designation (eg. "http"), and where *proto*
-        represents the protocal to be used. If the protocol is not
+        represents the protocol to be used. If the protocol is not
         specified, *proto* will default to the `proto' specified in the
         arguments. If `proto' is not specified there it will default to
         "tcp". If *host* is not specified, *host* will default to `host'
         specified in the arguments. If `host' is not specified there it will
-        default to "localhost".
+        default to "localhost". Default port is 20203.
 
     host
-        Local host or addr upon which to bind port.
+        Local host or addr upon which to bind port. See the IO::Socket
+        manpage.
 
     proto
-        Protocol to use when binding ports.
+        Protocol to use when binding ports. See the IO::Socket manpage.
 
     listen
           See L<IO::Socket>
@@ -267,18 +273,18 @@ ARGUMENTS
     reverse_lookups
         Specify whether to lookup the hostname of the connected IP.
         Information is cached in server object under `peerhost' property.
-        Default is to not use reverse_lookups.
+        Default is to not use reverse_lookups (undef).
 
     allow/deny
         May be specified multiple times. Contains regex to compare to
         incoming peeraddr or peerhost (if reverse_lookups has been enabled).
         If allow or deny options are given, the incoming client must match
         an allow and not match a deny or the client connection will be
-        close.
+        closed. Defaults to empty array refs.
 
     chroot
         Directory to chroot to after bind process has taken place and the
-        server is still possibly running as root.
+        server is still running as root. Defaults to undef.
 
     user
         Userid or username to become after the bind process has occured.
@@ -292,7 +298,7 @@ ARGUMENTS
 
     background
         Specifies whether or not the server should fork after the bind
-        release itself from the command line.
+        method to release itself from the command line. Defaults to undef.
 
 PROPERTIES
     All of the `ARGUMENTS' listed above become properties of the server
@@ -326,7 +332,7 @@ PROPERTIES
       my $self->set_property( key1 => 'val1' );
 
     Properties are allowed to be changed at any time with caution (please do
-    not undef the sock property or you will close the client connection.
+    not undef the sock property or you will close the client connection).
 
 CONFIGURATION FILE
     `Net::Server' allows for the use of a configuration file to read in
@@ -352,7 +358,8 @@ CONFIGURATION FILE
       ### background the process?
       background  1
 
-      ### ports to bind
+      ### ports to bind (this should bind
+      ### 127.0.0.1:20205 and localhost:20204)
       host        127.0.0.1
       port        localhost:20204
       port        20205
@@ -535,6 +542,11 @@ FILES
 
 AUTHOR
     Paul T. Seamons paul@seamons.com
+
+THANKS
+    Thanks to Rob Brown for help with miscellaneous concepts such as
+    tracking down the serialized select via flock ala Apache. Thanks to
+    Jonathan J. Miner for patching a blatant problem in the reverse lookups.
 
 SEE ALSO
     Please see also the Net::Server::Fork manpage, the Net::Server::INET
