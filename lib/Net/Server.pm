@@ -1,8 +1,8 @@
 # -*- perl -*-
 #
-#  Net::Server - adpO - Extensible Perl internet server
+#  Net::Server - bdpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.30 2001/11/19 19:47:20 rhandom Exp $
+#  $Id: Server.pm,v 1.33 2002/01/29 23:19:47 rhandom Exp $
 #
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -34,7 +34,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.81';
+$VERSION = '0.82';
 
 ### program flow
 sub run {
@@ -610,7 +610,7 @@ sub post_accept {
   ### duplicate some handles and flush them
   ### maybe we should save these somewhere - maybe not
   *STDIN  = \*{ $prop->{client} };
-  *STDOUT = \*{ $prop->{client} };
+  *STDOUT = \*{ $prop->{client} } if ! $prop->{client}->isa('IO::Socket::SSL');
   STDIN->autoflush(1);
   STDOUT->autoflush(1);
   select(STDOUT);
@@ -808,7 +808,11 @@ sub post_process_request {
 
 ### determine if I am done with a request
 ### in the base type, we are never done until a SIG occurs
-sub done { 0 }
+sub done {
+  my $self = shift;
+  $self->{server}->{done} = shift if @_;
+  return $self->{server}->{done};
+}
 
 
 ### fork off a child process to handle dequeuing
@@ -1674,7 +1678,7 @@ This will prevent any output from ending up at the terminal.
 
 Specifies whether or not a forked child process has permission
 or not to shutdown the entire server process.  If set to 1, the
-child may signal the parent to shutdown all children.  Default
+child may NOT signal the parent to shutdown all children.  Default
 is undef (not set).
 
 =back

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #  
-#  $Id: SSL.pm,v 1.3 2001/08/24 18:26:56 rhandom Exp $
+#  $Id: SSL.pm,v 1.4 2002/01/29 23:19:47 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -130,6 +130,7 @@ sub accept {
 
   ### pass items on
   if( defined($client) ){
+    bless $client, ref($sock);
     $client->NS_proto( $sock->NS_proto );
   }
 
@@ -214,6 +215,14 @@ Net::Server.  However, Net::Server should also be able to
 maintain any number of TCP, UDP, or UNIX connections in
 addition to the one SSL connection.
 
+Additionally, getline support is very limited and writing
+directly to STDOUT will not work.  This is entirely dependent
+upon the implementation of IO::Socket::SSL.  getline may work
+but the client is not copied to STDOUT under SSL.  It is suggested
+that clients sysread and syswrite to the client handle
+(located in $self->{server}->{client} or passed to the process_request
+subroutine as the first argument).
+
 =head1 PARAMETERS
 
 In addition to the normal Net::Server parameters, any of the
@@ -223,5 +232,10 @@ See L<IO::Socket::SSL> for information on setting this up.
 =head1 LICENCE
 
 Distributed under the same terms as Net::Server
+
+=head1 THANKS
+
+Thanks to Vadim for pointing out the IO::Socket::SSL accept
+was returning objects blessed into the wrong class.
 
 =cut
