@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #  
-#  $Id: PreForkSimple.pm,v 1.2 2001/08/24 17:30:29 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.3 2001/10/02 15:35:09 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -368,31 +368,6 @@ sub run_parent {
   ### allow fall back to main run method
 
 }
-
-### allow for other process to tie in to the parent read
-sub parent_read_hook {}
-
-### routine to shut down the server (and all forked children)
-sub server_close {
-  my $self = shift;
-  my $prop = $self->{server};
-
-  ### if a parent, fork off cleanup sub and close
-  if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
-
-    $self->SUPER::server_close();
-
-  ### if a child, signal the parent and close
-  ### normally the child shouldn't, but if they do...
-  }else{
-
-    kill(2,$prop->{ppid});
-
-  }
-  
-  exit;
-}
-
 
 1;
 

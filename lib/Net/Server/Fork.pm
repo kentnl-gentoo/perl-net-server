@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #  
-#  $Id: Fork.pm,v 1.5 2001/08/27 16:04:54 rhandom Exp $
+#  $Id: Fork.pm,v 1.6 2001/10/02 15:35:09 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -216,27 +216,6 @@ sub run_client_connection {
 
   $self->SUPER::run_client_connection;
 
-}
-
-### routine to shut down the server (and all forked children)
-sub server_close {
-  my $self = shift;
-  my $prop = $self->{server};
-
-  ### if a parent, fork off cleanup sub and close
-  if( ! defined $prop->{ppid} || $prop->{ppid} == $$ ){
-
-    $self->SUPER::server_close();
-
-  ### if a child, signal the parent and close
-  ### normally the child shouldn't, but if they do...
-  }else{
-
-    kill(2,$prop->{ppid});
-
-  }
-  
-  exit;
 }
 
 1;

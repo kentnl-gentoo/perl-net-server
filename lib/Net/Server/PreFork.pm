@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #  
-#  $Id: PreFork.pm,v 1.8 2001/08/24 17:52:36 rhandom Exp $
+#  $Id: PreFork.pm,v 1.9 2001/10/02 15:35:09 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -422,6 +422,8 @@ sub coordinate_children {
 
 }
 
+### allow for other process to tie in to the parent read
+sub parent_read_hook {}
 
 1;
 
