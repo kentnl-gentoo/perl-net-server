@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #  
-#  $Id: PreFork.pm,v 1.10 2001/12/12 23:09:49 rhandom Exp $
+#  $Id: PreFork.pm,v 1.14 2002/06/20 19:30:08 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -25,6 +25,7 @@ use POSIX qw(WNOHANG);
 use Net::Server::PreForkSimple;
 use Net::Server::SIG qw(register_sig check_sigs);
 use IO::Select ();
+use IO::Socket::UNIX;
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
@@ -44,6 +45,7 @@ sub options {
                min_spare_servers max_spare_servers
                spare_servers
                check_for_waiting
+               child_communication
                ) ){
     $prop->{$_} = undef unless exists $prop->{$_};
     $ref->{$_} = \$prop->{$_};
@@ -113,6 +115,7 @@ sub loop {
 
   ### get ready for children
   $prop->{children} = {};
+  $prop->{child_select} = IO::Select->new(\*_READ);
 
   $self->log(3,"Beginning prefork ($prop->{min_servers} processes)\n");
 
@@ -144,12 +147,15 @@ sub kill_n_children {
   $self->log(3,"Killing \"$n\" children");
 
   foreach (keys %{ $prop->{children} }){
-    next unless $prop->{children}->{$_} eq 'waiting';
-    if( ! kill('HUP',$_) ){
-      delete $prop->{children}->{$_};
-      next;
-    }
-    last if --$n <= 0;
+    next unless $prop->{children}->{$_}->{status} eq 'waiting';
+
+    $n --;
+    $prop->{tally}->{waiting} --;
+
+    ### try to kill the child
+    kill('HUP',$_) or $self->delete_child( $_ );
+
+    last if $n <= 0;
   }
 }
 
@@ -160,23 +166,44 @@ sub run_n_children {
   my $n     = shift;
   return unless $n > 0;
 
+  my ($parentsock, $childsock);
+
   $self->log(3,"Starting \"$n\" children");
   $prop->{last_start} = time();
-  
+
   for( 1..$n ){
+
+    if( $prop->{child_communication} ) {
+      ($parentsock, $childsock) = 
+        IO::Socket::UNIX->socketpair(AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+    }
+
     my $pid = fork;
 
     ### trouble
     if( not defined $pid ){
+      if( $prop->{child_communication} ){
+        $parentsock->close();
+        $childsock->close();
+      }
+
       $self->fatal("Bad fork [$!]");
 
     ### parent
     }elsif( $pid ){
-      $prop->{children}->{$pid} = 'waiting';
+      if( $prop->{child_communication} ){
+	$prop->{child_select}->add($parentsock);
+        $prop->{children}->{$pid}->{sock} = $parentsock;
+      }
+      
+      $prop->{children}->{$pid}->{status} = 'waiting';
       $prop->{tally}->{waiting} ++;
 
     ### child
     }else{
+      if( $prop->{child_communication} ){
+        $prop->{parent_sock} = $childsock;
+      }
       $self->run_child;
 
     }
@@ -191,7 +218,10 @@ sub run_child {
 
   ### restore sigs (turn off warnings during)
   $SIG{INT} = $SIG{TERM} = $SIG{QUIT}
-    = $SIG{CHLD} = 'DEFAULT';
+    = $SIG{CHLD} = sub {
+      $self->child_finish_hook;
+      exit;
+    };
 
   ### let pipes take care of themselves
   $SIG{PIPE} = sub { $prop->{SigPIPEd} = 1 };
@@ -207,6 +237,7 @@ sub run_child {
   $prop->{SigHUPed}  = 0;
   $SIG{HUP} = sub {
     unless( $prop->{connected} ){
+      $self->child_finish_hook;
       exit;
     }
     $prop->{SigHUPed} = 1;
@@ -239,6 +270,7 @@ sub run_child {
 sub run_parent {
   my $self=shift;
   my $prop = $self->{server};
+  my $id;
 
   $self->log(4,"Parent ready for children.\n");
   
@@ -267,8 +299,7 @@ sub run_parent {
                CHLD => sub {
                  while ( defined(my $chld = waitpid(-1, WNOHANG)) ){
                    last unless $chld > 0;
-                   $prop->{children}->{$chld} = "gracias";
-#                   delete $prop->{children}->{$chld};
+		   $self->delete_child( $chld );
                  }
                },
 ### uncomment this area to allow SIG USR1 to give some runtime debugging               
@@ -278,10 +309,6 @@ sub run_parent {
 #               },
                );
 
-  ### need a selection handle
-  my $select = IO::Select->new();
-  $select->add(\*_READ);
-
   ### loop on reading info from the children
   while( 1 ){
 
@@ -289,7 +316,7 @@ sub run_parent {
     ## Normally it is not good to do selects with
     ## getline or <$fh> but this is controlled output
     ## where everything that comes through came from us.
-    my @fh = $select->can_read(10);
+    my @fh = $prop->{child_select}->can_read($prop->{check_for_waiting});
     if( &check_sigs() ){
       last if $prop->{_HUP};
     }
@@ -298,33 +325,41 @@ sub run_parent {
       next;
     }
 
-    ### get the filehandle
-    my $fh = shift(@fh);
-    next unless defined $fh;
-    
-    ### read a line
-    my $line = <$fh>;
-    next if not defined $line;
+    ### process every readable handle
+    foreach my $fh (@fh) {
 
-    ### optional test by user hook
-    last if $self->parent_read_hook($line);
+      ### preforking server data
+      if ($fh == \*_READ) {
+	
+        ### read a line
+        my $line = <$fh>;
+        next if not defined $line;
 
-    ### child should say "$pid status\n"
-    next unless $line =~ /^(\d+)\ +(waiting|processing|dequeue|exiting)$/;
-    my ($pid,$status) = ($1,$2);
+        ### optional test by user hook
+        last if $self->parent_read_hook($line);
 
-    ### record the status
-    $prop->{children}->{$pid} = $status;
-    if( $status eq 'processing' ){
-      $prop->{tally}->{processing} ++;
-      $prop->{tally}->{waiting} --;
-      $prop->{last_process} = time();
-    }elsif( $status eq 'waiting' ){
-      $prop->{tally}->{processing} --;
-      $prop->{tally}->{waiting} ++;
-    }elsif( $status eq 'exiting' ){
-      $prop->{tally}->{processing} --;
-      delete $prop->{children}->{$pid};
+        ### child should say "$pid status\n"
+        next unless $line =~ /^(\d+)\ +(waiting|processing|dequeue|exiting)$/;
+        my ($pid,$status) = ($1,$2);
+
+        ### record the status
+        $prop->{children}->{$pid}->{status} = $status;
+        if( $status eq 'processing' ){
+          $prop->{tally}->{processing} ++;
+          $prop->{tally}->{waiting} --;
+          $prop->{last_process} = time();
+        }elsif( $status eq 'waiting' ){
+          $prop->{tally}->{processing} --;
+          $prop->{tally}->{waiting} ++;
+        }elsif( $status eq 'exiting' ){
+          $prop->{tally}->{processing} --;
+	  $self->delete_child( $pid );
+        }
+
+      ### user defined handler
+      }else{
+        $self->child_is_talking_hook($fh);
+      }
     }
 
     ### check up on the children
@@ -352,7 +387,7 @@ sub coordinate_children {
                       processing => 0,
                       dequeue    => 0};
     foreach (values %{ $prop->{children} }){
-      $prop->{tally}->{$_} ++;
+      $prop->{tally}->{$_->{status}} ++;
     }
     $w -= $prop->{tally}->{waiting};
     $p -= $prop->{tally}->{processing};
@@ -403,7 +438,10 @@ sub coordinate_children {
     $prop->{last_checked_for_dead} = $time;
     foreach (keys %{ $prop->{children} }){
       ### see if the child can be killed
-      kill(0,$_) or delete $prop->{children}->{$_};
+      if( ! kill(0,$_) ){
+        $self->delete_child($_);
+        $prop->{tally}->{ $prop->{children}->{status} } --;
+      }
     }
   }
 
@@ -429,6 +467,8 @@ sub coordinate_children {
 
 ### allow for other process to tie in to the parent read
 sub parent_read_hook {}
+
+sub child_is_talking_hook {}
 
 1;
 
@@ -477,22 +517,24 @@ Net::Server::PreFork contains several other configurable
 parameters.  You really should also see
 L<Net::Server::PreForkSimple>.
 
-  Key               Value                   Default
-  min_servers       \d+                     5
-  min_spare_servers \d+                     2
-  max_spare_servers \d+                     10
-  max_servers       \d+                     50
-  max_requests      \d+                     1000
+  Key                 Value                   Default
+  min_servers         \d+                     5
+  min_spare_servers   \d+                     2
+  max_spare_servers   \d+                     10
+  max_servers         \d+                     50
+  max_requests        \d+                     1000
 
-  serialize         (flock|semaphore|pipe)  undef
+  serialize           (flock|semaphore|pipe)  undef
   # serialize defaults to flock on multi_port or on Solaris
-  lock_file         "filename"              POSIX::tmpnam
+  lock_file           "filename"              POSIX::tmpnam
                                             
-  check_for_dead    \d+                     30
-  check_for_waiting \d+                     10
+  check_for_dead      \d+                     30
+  check_for_waiting   \d+                     10
 
-  max_dequeue       \d+                     undef
-  check_for_dequeue \d+                     undef
+  max_dequeue         \d+                     undef
+  check_for_dequeue   \d+                     undef
+
+  child_communication 1                       undef
 
 =over 4
 
@@ -521,6 +563,15 @@ apply to dequeue processes.
 
 Seconds to wait before checking to see if we can kill
 off some waiting servers.
+
+=item child_communication
+
+Enable child communication to parent via unix sockets.  If set
+to true, will let children write to the socket contained in
+$self->{server}->{parent_sock}.  The parent will be notified through
+child_is_talking_hook where the first argument is the socket
+to the child.  The child's socket is stored in
+$self->{server}->{children}->{$child_pid}->{sock}.
 
 =back
 
@@ -565,6 +616,9 @@ white space are ignored.
 
   ### reverse lookups ?
   # reverse_lookups on
+
+  ### enable child communication ?
+  # child_communication
  
   #-------------- file test.conf --------------
 
@@ -590,6 +644,12 @@ See L<Net::Server::PreForkSimple> for other hooks.
 This hook occurs any time that the parent reads information
 from the child.  The line from the child is sent as an
 argument.
+
+=item C<$self-E<gt>child_is_talking_hook()>
+
+This hook occurs if child_communication is true and the child
+has written to $self->{server}->{parent_sock}.  The first argument
+will be the open socket to the child.
 
 =back
 

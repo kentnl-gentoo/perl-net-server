@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::UNIX - Net::Server Protocol module
 #  
-#  $Id: UNIX.pm,v 1.6 2001/08/24 18:26:56 rhandom Exp $
+#  $Id: UNIX.pm,v 1.9 2002/06/20 19:53:48 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -21,7 +21,7 @@ package Net::Server::Proto::UNIX;
 
 use strict;
 use vars qw($VERSION $AUTOLOAD @ISA);
-use IO::Socket::UNIX ();
+use IO::Socket ();
 use Socket qw(SOCK_STREAM SOCK_DGRAM);
 
 $VERSION = $Net::Server::VERSION; # done until separated
@@ -44,7 +44,7 @@ sub object {
   my $u_path = $prop->{unix_path} || undef;
 
   ### allow for things like "/tmp/myfile.sock|SOCK_STREAM"
-  if( $port =~ m/^([\w\.\-\*\/]+)\|(\d+)$/ ){
+  if( $port =~ m/^([\w\.\-\*\/]+)\|(\w+)$/ ){
     ($u_path,$u_type) = ($1,$2);
 
   ### allow for things like "/tmp/myfile.sock"
@@ -56,6 +56,12 @@ sub object {
     $server->fatal("Undeterminate port \"$port\" under ".__PACKAGE__);
   }
 
+  ### allow for the string rather than the function
+  if( $u_type eq 'SOCK_STREAM' ){
+    $u_type = SOCK_STREAM;
+  }elsif( $u_type eq 'SOCK_DGRAM' ){
+    $u_type = SOCK_DGRAM;
+  }
 
   ### create a blank socket
   my $sock = $class->SUPER::new();
@@ -93,7 +99,7 @@ sub log_connect {
   my $sock = shift;
   my $server    = shift;
   my $unix_path = $sock->NS_unix_path;
-  my $type = $sock->NS_unix_type == SOCK_STREAM ? 'SOCK_STREAM' : 'SOCK_DGRAM';
+  my $type = ($sock->NS_unix_type == SOCK_STREAM) ? 'SOCK_STREAM' : 'SOCK_DGRAM';
   
   $server->log(2,"Binding to UNIX socket file $unix_path using $type\n");
 }

@@ -2,10 +2,10 @@
 #
 #  Net::Server - bdpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.33 2002/01/29 23:19:47 rhandom Exp $
+#  $Id: Server.pm,v 1.43 2002/06/20 20:01:59 rhandom Exp $
 #
 #  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
+#                      paul at seamons.com
 #                      http://seamons.com/
 #
 #  This package may be distributed under the terms of either the
@@ -34,7 +34,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.82';
+$VERSION = '0.84';
 
 ### program flow
 sub run {
@@ -124,7 +124,6 @@ sub run_client_connection {
 
 
 ###----------------------------------------------------------###
-
 
 ### any pre-initialization stuff
 sub configure_hook {}
@@ -217,6 +216,7 @@ sub post_configure {
     open(_SERVER_LOG, ">>$prop->{log_file}")
       or die "Couldn't open log file \"$prop->{log_file}\" [$!].";
     _SERVER_LOG->autoflush(1);
+    $prop->{chown_log_file} = 1;
 
   }
 
@@ -228,9 +228,11 @@ sub post_configure {
   }
 
   ### completetly daemonize by closing STDIN, STDOUT (should be done before fork)
-  if( defined($prop->{setsid}) || length($prop->{log_file}) ){
-    open STDIN,  '</dev/null' || die "Can't read /dev/null  [$!]";
-    open STDOUT, '>/dev/null' || die "Can't write /dev/null [$!]";
+  if( ! $prop->{_is_inet} ){
+    if( defined($prop->{setsid}) || length($prop->{log_file}) ){
+      open STDIN,  '</dev/null' || die "Can't read /dev/null  [$!]";
+      open STDOUT, '>/dev/null' || die "Can't write /dev/null [$!]";
+    }
   }
 
   ### background the process
@@ -432,8 +434,12 @@ sub post_bind {
     if( $prop->{pid_file_unlink} ){
       push @chown_files, $prop->{pid_file};
     }
-    if( $prop->{log_file_unlink} ){
-      push @chown_files, $prop->{log_file};
+    if( $prop->{lock_file_unlink} ){
+      push @chown_files, $prop->{lock_file};
+    }
+    if( $prop->{chown_log_file} ){
+      delete $prop->{chown_log_file};
+      push @chown_files, $prop->{log_file};      
     }
     my $uid = $prop->{user};
     my $gid = (split(/\ /,$prop->{group}))[0];
@@ -467,8 +473,13 @@ sub post_bind {
       set_uid( $prop->{user} );
     }
   };
-  $self->fatal( $@ ) if $@;
-
+  if( $@ ){
+    if( $< == 0 || $> == 0 ){
+      $self->fatal( $@ );
+    }else{
+      $self->log(2,$@);
+    }
+  }
 
   ### record number of request
   $prop->{requests} = 0;
@@ -567,10 +578,13 @@ sub accept {
     ### success
     return 1 if defined $prop->{client};
 
+    $self->log(2,"Accept failed with $retries tries left.");
+
     ### try again in a second
     sleep(1);
 
   }
+  $self->log(1,"Ran out of accept retries!");
 
   return undef;
 }
@@ -609,11 +623,15 @@ sub post_accept {
 
   ### duplicate some handles and flush them
   ### maybe we should save these somewhere - maybe not
-  *STDIN  = \*{ $prop->{client} };
-  *STDOUT = \*{ $prop->{client} } if ! $prop->{client}->isa('IO::Socket::SSL');
-  STDIN->autoflush(1);
-  STDOUT->autoflush(1);
-  select(STDOUT);
+  if( defined $prop->{client} ){
+    *STDIN  = \*{ $prop->{client} };
+    *STDOUT = \*{ $prop->{client} } if ! $prop->{client}->isa('IO::Socket::SSL');
+    STDIN->autoflush(1);
+    STDOUT->autoflush(1);
+    select(STDOUT);
+  }else{
+    $self->log(1,"Client socket information could not be determined!");
+  }
 
 }
 
@@ -652,8 +670,7 @@ sub get_client_info {
     $proto_type = 'UDP';
     ($prop->{peerport} ,$prop->{peeraddr})
       = Socket::sockaddr_in( $prop->{udp_peer} );
-  }else{
-    $prop->{peername} = getpeername( STDIN );
+  }elsif( $prop->{peername} = getpeername( STDIN ) ){
     ($prop->{peerport}, $prop->{peeraddr})
       = Socket::unpack_sockaddr_in( $prop->{peername} );
   }
@@ -774,7 +791,6 @@ sub process_request {
 
       alarm($timeout);
     }
-    alarm($previous_alarm);
 
   };
   alarm($previous_alarm);
@@ -826,7 +842,7 @@ sub run_dequeue {
 
   ### parent
   }elsif( $pid ){
-    $self->{server}->{children}->{$pid} = 'dequeue';
+    $self->{server}->{children}->{$pid}->{status} = 'dequeue';
 
   ### child
   }else{
@@ -913,8 +929,8 @@ sub close_children {
     my $pid = each %{ $prop->{children} };
 
     ### if it is killable, kill it
-    if( not defined($pid) or kill(2,$pid) or not kill(0,$pid) ){
-      delete $prop->{children}->{$pid};
+    if( ! defined($pid) || kill(15,$pid) || ! kill(0,$pid) ){
+      $self->delete_child( $pid );
     }
 
   }
@@ -1159,6 +1175,21 @@ sub process_conf {
   $self->process_args( $self->{server}->{conf_file_args}, $template );
 }
 
+### remove a child from the children hash. Not to be called by user.
+### if UNIX sockets are in use the socket is removed from the select object.
+sub delete_child {
+  my $self = shift;
+  my $pid  = shift;
+  my $prop = $self->{server};
+
+  ### prefork server check to clear child communication
+  if( $prop->{child_communication} ){
+    $prop->{child_select}->remove( $prop->{children}->{$pid}->{sock} );
+    $prop->{children}->{$pid}->{sock}->close();
+  }
+
+  delete $prop->{children}->{$pid};
+}
 
 ###----------------------------------------------------------###
 sub get_property {
@@ -2004,13 +2035,29 @@ servers to user Net::Server as a base layer.
   Net/Server/Proto.pm
   Net/Server/Proto/*.pm
 
+=head1 INSTALL
+
+Download and extract tarball before running
+these commands in its base directory:
+
+  perl Makefile.PL
+  make
+  make test
+  make install
+
+For RPM installation, download tarball before
+running these commands in your _topdir:
+
+  rpm -ta SOURCES/Net-Server-*.tar.gz
+  rpm -ih RPMS/noarch/perl-Net-Server-*.rpm
+
 =head1 AUTHOR
 
-Paul T. Seamons paul@seamons.com
+Paul T. Seamons <paul at seamons.com>
 
 =head1 THANKS
 
-Thanks to Rob Brown <rbrown@about-inc.com> for help with
+Thanks to Rob Brown <rbrown at about-inc.com> for help with
 miscellaneous concepts such as tracking down the
 serialized select via flock ala Apache and the reference
 to IO::Select making multiport servers possible.  And for
@@ -2020,7 +2067,7 @@ exec (making HUP possible).
 Thanks to Jonathan J. Miner <miner@doit.wisc.edu> for
 patching a blatant problem in the reverse lookups.
 
-Thanks to Bennett Todd <bet@rahul.net> for
+Thanks to Bennett Todd <bet at rahul.net> for
 pointing out a problem in Solaris 2.5.1 which does not
 allow multiple children to accept on the same port at
 the same time.  Also for showing some sample code
@@ -2031,8 +2078,11 @@ Thanks to I<traveler> and I<merlyn> from http://perlmonks.org
 for pointing me in the right direction for determining
 the protocol used on a socket connection.
 
-Thanks to Jeremy Howard <j+daemonize@howard.fm> for
+Thanks to Jeremy Howard <j+daemonize at howard.fm> for
 numerous suggestions and for work on Net::Server::Daemonize.
+
+Thanks to Vadim <vadim at hardison.net> for patches to
+implement parent/child communication on PreFork.pm.
 
 =head1 SEE ALSO
 
@@ -2047,7 +2097,7 @@ L<Net::Server::Single>
 =head1 COPYRIGHT
 
   Copyright (C) 2001, Paul T Seamons
-                      paul@seamons.com
+                      paul at seamons.com
                       http://seamons.com/
 
   This package may be distributed under the terms of either the

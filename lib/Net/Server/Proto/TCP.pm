@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #  
-#  $Id: TCP.pm,v 1.8 2001/08/24 18:26:56 rhandom Exp $
+#  $Id: TCP.pm,v 1.9 2002/06/20 19:53:56 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -21,7 +21,7 @@ package Net::Server::Proto::TCP;
 
 use strict;
 use vars qw($VERSION $AUTOLOAD @ISA);
-use IO::Socket::INET ();
+use IO::Socket ();
 
 $VERSION = $Net::Server::VERSION; # done until separated
 @ISA = qw(IO::Socket::INET);

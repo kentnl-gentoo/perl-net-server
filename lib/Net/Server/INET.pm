@@ -2,7 +2,7 @@
 #
 #  Net::Server::INET - Net::Server personality
 #  
-#  $Id: INET.pm,v 1.4 2001/11/19 19:47:20 rhandom Exp $
+#  $Id: INET.pm,v 1.5 2002/06/20 20:02:07 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -27,6 +27,13 @@ use Net::Server;
 $VERSION = $Net::Server::VERSION; # done until separated
 
 @ISA = qw(Net::Server);
+
+sub post_configure {
+  my $self = shift;
+  $self->{server}->{_is_inet} = 1;
+  $self->SUPER::post_configure();
+  delete $self->{server}->{_is_inet};
+}
 
 ### no need to prepare bind
 sub pre_bind {}
