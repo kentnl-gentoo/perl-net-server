@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.14 2001/03/20 06:28:21 rhandom Exp $
+#  $Id: MultiType.pm,v 1.15 2001/04/24 13:31:09 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -81,14 +81,16 @@ sub run {
 
       ### skip if there was an error
       if( $@ ){
-        print STDERR "Couldn't become server type \"$package\" [$@]\n";
+        warn "Couldn't become server type \"$package\" [$@]\n";
         next;
       }
 
       ### turn me into that package
       require $package_file; # outside the eval block
       unshift @ISA, $package;
-      warn("Becoming sub class of \"$package\"\n");
+      if( !defined($prop->{setsid}) && !length($prop->{log_file}) ){
+        warn "Becoming sub class of \"$package\"\n";
+      }
 
       ### success - skip any others
       last;

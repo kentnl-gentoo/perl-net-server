@@ -1,5 +1,45 @@
 Revision history for Perl extension Net::Server.
 
+0.63  May 07 22:39 2001
+        - Updated UDP parameter names.  Names are now
+                udp_recv_len (previously udp_packet_size)
+                and udp_recv_flags (previously udp_packet_offset).
+        - Updated udp_server.pl to use new names.
+
+0.62  May 01 00:44 2001
+        - Updated to use getsockopt (determine proto on the fly)
+        - Updated perldoc.
+        - Added udp_server.pl example.
+        - Added UDP_test.t for "make test".
+        - Allow customization of udp recv parameters.
+
+0.61  Apr 30 06:32 2001 
+        - Sig HUP with UDP now works.
+        - Peer info is correctly accessed under UDP
+        - Net::Server::INET will not allow one server
+                to do both tcp and udp without special
+                parameters being passed to the server.
+        - Need to make test program for UDP.
+
+0.60  Apr 28 01:56 2001
+        - Added support for UDP.  Can now simultaneously accept
+                 TCP and UDP.
+                Still to do:
+                    - allow for SIG HUP under UDP
+                    - better determination of peerinfo under UDP
+                    - clean up inetd mode.
+        - Added restart_close_hook.
+        - Added restart_open_hook.
+        - Added more documentation (socket access, restarting,
+                protocols)
+
+0.59  Apr 24 07:40 2001
+        - Forced STDIN,STDOUT,and STDERR to reopen to /dev/null
+                if setsid or log_file is set.
+                This allows for true daemonization (so
+                no output ends up at the terminal).
+        - Made appropriate changes in MultiType as well.
+
 0.58  Apr 06 12:29 2001
         - SIG HUP is complete.  Fixed bug in SIG HUP'ing 
                 PreFork mode.  Now effectively restarts.
