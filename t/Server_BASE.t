@@ -1,4 +1,4 @@
-BEGIN { $| = 1; print "1..5\n"; }
+BEGIN { $| = 1; print "1..6\n"; }
 
 
 ### load the module
@@ -28,6 +28,28 @@ local $SIG{ALRM} = sub { die };
 my $alarm = 15;
 
 
+### find some open ports
+### This is a departure from previously hard
+### coded ports.  Each of the server tests
+### will use it's own unique ports to avoid
+### reuse problems on some systems.
+my $start_port = 20100;
+my $num_ports  = 3;
+my @ports      = ();
+for my $i (0..99){
+  my $sock = IO::Socket::INET->new(PeerAddr => 'localhost',
+				   PeerPort => ($start_port + $i),
+				   Proto    => 'tcp');
+  push @ports, ($start_port + $i) if ! defined $sock;
+  last if $num_ports == @ports;
+}
+if( $num_ports == @ports ){
+  print "ok 3\n";
+}else{
+  print "not ok 3\n";
+}
+
+
 ### test and setup pipe
 local *READ;
 local *WRITE;
@@ -44,10 +66,10 @@ eval {
   die unless scalar(<READ>) eq "hi\n";
 
   $pipe = 1;
-  print "ok 3\n";
+  print "ok 4\n";
 
 };
-print "not ok 3\n" if $@;
+print "not ok 4\n" if $@;
 
 
 ### extend the accept method a little
@@ -80,7 +102,7 @@ if( $fork && $pipe ){
 
       ### connect to child
       my $remote = IO::Socket::INET->new(PeerAddr => 'localhost',
-                                         PeerPort => 20203,
+                                         PeerPort => $ports[0],
                                          Proto    => 'tcp');
       die unless defined $remote;
 
@@ -90,24 +112,24 @@ if( $fork && $pipe ){
 
       ### shut down the server
       print $remote "exit\n";
-      print "ok 4\n";
+      print "ok 5\n";
 
     ### child does the server
     }else{
 
       ### start the server
       close STDERR;
-      Net::Server::Test->run();
+      Net::Server::Test->run(port => $ports[0]);
       exit;
 
     }
 
     alarm 0;
   };
-  print "not ok 4\n" if $@;
+  print "not ok 5\n" if $@;
 
 }else{
-  print "not ok 4\n";
+  print "not ok 5\n";
 }
 
 
@@ -128,8 +150,8 @@ if( $fork && $pipe){
       <READ>; ### wait until the child writes to us
 
       ### connect to first bound port on child
-      my $remote = IO::Socket::INET->new(PeerAddr => '127.0.0.1',
-                                         PeerPort => 20205,
+      my $remote = IO::Socket::INET->new(PeerAddr => 'localhost',
+                                         PeerPort => $ports[2],
                                          Proto    => 'tcp');
       die unless defined $remote;
 
@@ -144,7 +166,7 @@ if( $fork && $pipe){
 
       ### connect to second bound port on child
       $remote = IO::Socket::INET->new(PeerAddr => 'localhost',
-                                      PeerPort => 20204,
+                                      PeerPort => $ports[1],
                                       Proto    => 'tcp');
       die unless defined $remote;
 
@@ -154,23 +176,23 @@ if( $fork && $pipe){
 
       ### shut down the server
       print $remote "exit\n";
-      print "ok 5\n";
+      print "ok 6\n";
 
     ### child does the server
     }else{
 
       ### start up a server bound to two ports
       close STDERR;
-      Net::Server::Test->run(port => '127.0.0.1:20205',
-                             port => '20204' );
+      Net::Server::Test->run(port => "localhost:$ports[2]",
+                             port => $ports[1] );
       exit;
 
     }
 
     alarm 0;
   };
-  print "not ok 5\n" if $@;
+  print "not ok 6\n" if $@;
 
 }else{
-  print "not ok 5\n";
+  print "not ok 6\n";
 }

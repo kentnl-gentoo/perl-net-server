@@ -2,7 +2,7 @@
 #
 #  Net::Server - adpO - Extensible Perl internet server
 #  
-#  $Id: Server.pm,v 1.116 2001/05/08 04:48:25 rhandom Exp $
+#  $Id: Server.pm,v 1.120 2001/07/05 06:15:59 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -22,12 +22,13 @@
 package Net::Server;
 
 use strict;
+use vars qw( $VERSION );
 use Socket qw( inet_aton inet_ntoa AF_INET );
 use IO::Socket ();
 use POSIX ();
 use Fcntl ();
 
-$Net::Server::VERSION = '0.63';
+$VERSION = '0.65';
 
 ### program flow
 sub run {
@@ -230,7 +231,7 @@ sub pre_bind {
   my $self = shift;
   my $prop = $self->{server};
 
-  $self->log(2,$self->log_time ." ". ref($self) ." starting!!! pid($$)");
+  $self->log(2,$self->log_time ." ". ref($self) ." starting! pid($$)");
 
   ### set a default port, host, and proto
   if( ! defined( $prop->{port} )
@@ -539,7 +540,7 @@ sub get_sock_protocol {
   my $sock = shift;
   my $prop = $self->{server};
 
-  ### need to know what protocol
+  ### need to know what protocol (cache the result)
   my $fileno = $sock->fileno();
   if( ! exists $prop->{fn_proto}->{$fileno} ){
     my $type_no = $sock->getsockopt(Socket::SOL_SOCKET(),Socket::SO_TYPE());
@@ -776,6 +777,32 @@ sub post_process_request {
 sub done { 0 }
 
 
+### fork off a child process to handle dequeuing
+sub run_dequeue {
+  my $self = shift;
+  my $pid  = fork;
+
+  ### trouble
+  if( not defined $pid ){
+    $self->fatal("Bad fork [$!]");
+    
+  ### parent
+  }elsif( $pid ){
+    $self->{server}->{children}->{$pid} = 'dequeue';
+
+  ### child
+  }else{
+    $self->dequeue();
+    exit;
+  }
+}
+
+### sub process which could be implemented to
+### perform tasks such as clearing a mail queue.
+### currently only supported in PreFork
+sub dequeue {}
+
+
 ### user customizable hook
 sub pre_server_close_hook {}
 
@@ -787,7 +814,7 @@ sub server_close{
 
   $SIG{INT} = 'DEFAULT';
 
-  $self->log(2,$self->log_time . " Server closing!!!");
+  $self->log(2,$self->log_time . " Server closing!");
 
   ### remove children (only applies to Fork and PreFork
   if( defined $prop->{children} ){

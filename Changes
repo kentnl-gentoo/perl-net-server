@@ -1,5 +1,19 @@
 Revision history for Perl extension Net::Server.
 
+0.65  Jul 05 22:01 2001
+        - Modified test suite to no longer depend upon
+                hard coded ports.  Improves test reliability
+                on systems where reuse on a socket is not
+                reliable itself.
+
+0.64  Jul 03 21:21 2001
+        - Allow fall back to main run method at server close
+        - Clean up signal processing in PreFork server
+        - Clean up child management in PreFork server
+        - Added run_dequeue and dequeue methods to the 
+                PreFork server (intended to allow for
+                management of items such as mail queues)
+
 0.63  May 07 22:39 2001
         - Updated UDP parameter names.  Names are now
                 udp_recv_len (previously udp_packet_size)

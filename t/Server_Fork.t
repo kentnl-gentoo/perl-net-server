@@ -1,4 +1,4 @@
-BEGIN { $| = 1; print "1..4\n"; }
+BEGIN { $| = 1; print "1..5\n"; }
 
 ### load the module
 END {print "not ok 1\n" unless $loaded;}
@@ -46,6 +46,28 @@ eval {
 print "not ok 3\n" if $@;
 
 
+### find some open ports
+### This is a departure from previously hard
+### coded ports.  Each of the server tests
+### will use it's own unique ports to avoid
+### reuse problems on some systems.
+my $start_port = 20200;
+my $num_ports  = 1;
+my @ports      = ();
+for my $i (0..99){
+  my $sock = IO::Socket::INET->new(PeerAddr => 'localhost',
+				   PeerPort => ($start_port + $i),
+				   Proto    => 'tcp');
+  push @ports, ($start_port + $i) if ! defined $sock;
+  last if $num_ports == @ports;
+}
+if( $num_ports == @ports ){
+  print "ok 4\n";
+}else{
+  print "not ok 4\n";
+}
+
+
 ### extend the accept method a little
 ### we will use this to signal that
 ### the server is ready to accept connections
@@ -75,7 +97,7 @@ if( $fork && $pipe ){
 
       ### connect to child
       my $remote = IO::Socket::INET->new(PeerAddr => 'localhost',
-                                         PeerPort => 20203,
+                                         PeerPort => $ports[0],
                                          Proto    => 'tcp');
       die unless defined $remote;
 
@@ -85,23 +107,23 @@ if( $fork && $pipe ){
 
       ### shut down the server
       print $remote "exit\n";
-      print "ok 4\n";
+      print "ok 5\n";
 
     ### child does the server
     }else{
 
       close STDERR;
-      Net::Server::Test->run();
+      Net::Server::Test->run(port => $ports[0]);
       exit;
 
     }
 
     alarm 0;
   };
-  print "not ok 4\n" if $@;
+  print "not ok 5\n" if $@;
 
 }else{
-  print "not ok 4\n";
+  print "not ok 5\n";
 }
 
 

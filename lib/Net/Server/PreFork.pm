@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #  
-#  $Id: PreFork.pm,v 1.52 2001/04/06 18:07:36 rhandom Exp $
+#  $Id: PreFork.pm,v 1.55 2001/07/04 06:07:54 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -39,8 +39,8 @@ sub options {
 
   $self->SUPER::options($ref);
 
-  foreach ( qw(min_servers max_servers spare_servers max_requests
-               check_for_dead check_for_waiting
+  foreach ( qw(min_servers max_servers spare_servers max_requests max_dequeue
+               check_for_dead check_for_waiting check_for_dequeue
                lock_file serialize) ){
     $prop->{$_} = undef unless exists $prop->{$_};
     $ref->{$_} = \$prop->{$_};
@@ -317,26 +317,39 @@ sub run_parent {
 
   $self->log(4,"Parent ready for children\n");
 
-  $prop->{last_checked_for_dead}    = time;
-  $prop->{last_checked_for_waiting} = time;
-
-  my $alarm = ($prop->{check_for_dead} < $prop->{check_for_waiting})
-    ? $prop->{check_for_dead} : $prop->{check_for_waiting} ;
-  $SIG{ALRM} = sub{ $self->coordinate_children; alarm($alarm); };
-
   ### prepare to read from children
   local *_READ = $prop->{_READ};
   _READ->autoflush(1);
 
-  ### make sure we unblock everything
-  $SIG{HUP} = sub{
-    close _READ;
-    $self->SUPER::sig_hup();
-  };
+  ### allow for writing to _READ
+  local *_WRITE = $prop->{_WRITE};
+  _WRITE->autoflush(1);
+
+  ### set some waypoints
+  $prop->{last_checked_for_dead}
+  = $prop->{last_checked_for_waiting}
+  = $prop->{last_checked_for_dequeue}
+  = time();
+
+  ### find the lowest positive time interval
+  my $alarm = (sort {$a <=> $b}
+               grep {defined($_) && $_>0} 
+               ($prop->{check_for_dead},
+                $prop->{check_for_waiting},
+                $prop->{check_for_dequeue},
+                ))[0];
+  
+  ### catch an alarm or a restart signal
+  ### do as little as possible here, work is done below
+  $SIG{ALRM} = sub{ $self->{sig} ||= 'alrm'; print _WRITE "$$ alrm\n"; };
+  $SIG{HUP}  = sub{ $self->{sig}   =  'hup'; print _WRITE "$$ hup\n";  };
 
   ### loop on reading info from the children
-  while(<_READ>){
+  alarm($alarm);
+  while( <_READ> ){
     alarm(0);
+    
+    next if not defined $_;
 
     ### optional test by user hook
     last if $self->parent_read_hook($_);
@@ -344,36 +357,49 @@ sub run_parent {
     ### child should say "$pid waiting\n"
     next unless /^(\d+)\ +(.+)$/;
     my ($pid,$status) = ($1,$2);
-    
+
+    ### allow for parent to get a word in edgewise
+    if( $pid == $$ || defined $self->{sig} ){
+      my $sig = delete($self->{sig}) || '';
+      if( $status eq 'alrm' ){
+        $self->coordinate_children();
+        alarm($alarm);
+        next;
+      }
+      if( $status eq 'hup' || $sig eq 'hup' ){
+        $self->sig_hup();
+        _READ->close();
+        last;
+      }
+    }
+
     ### record the status
     if( $status eq 'exiting' ){
       delete($prop->{children}->{$pid});
     }else{
       $prop->{children}->{$pid} = $status;
     }
-
+    
     ### check up on the children
     if( $status eq 'processing' || $status eq 'exiting' ){
-      $self->coordinate_children;
+      $self->coordinate_children();
     }
 
     alarm($alarm);
   }
 
-  ### shut down the children
-  $self->server_close;
+  ### allow fall back to main run method
 }
 
 
 ### allow for other process to tie in to the parent read
 sub parent_read_hook {}
 
-
 ### routine to determine if more children need to be started or stopped
 sub coordinate_children {
   my $self = shift;
   my $prop = $self->{server};
-  my $time = time;
+  my $time = time();
 
   ### periodically make sure children are alive
   if( $time - $prop->{last_checked_for_dead} > $prop->{check_for_dead} ){
@@ -383,21 +409,30 @@ sub coordinate_children {
       kill(0,$_) or delete $prop->{children}->{$_};
     }
   }
-  
+
   ### tally the possible types
-  my %num = (total=>0, waiting=>0, processing=>0);
-  foreach (keys %{ $prop->{children} }){
-    $num{total} ++;
-    $num{ $prop->{children}->{$_} } ++;
-  }
+  my %num = (waiting=>0, processing=>0, dequeue=>0);
+  $num{$_} ++ foreach (values %{ $prop->{children} });
+  my $total = $num{waiting} + $num{processing};
   
+  ### periodically check to see if we should clear the queue
+  if( defined $prop->{check_for_dequeue} ){
+    if( $time - $prop->{last_checked_for_dequeue} > $prop->{check_for_dequeue} ){
+      $prop->{last_checked_for_dequeue} = $time;
+      if( defined($prop->{max_dequeue})
+          && $num{dequeue} < $prop->{max_dequeue} ){
+        $self->run_dequeue();
+      }
+    }
+  }
+
   ### need more min_servers
-  if( $num{total} < $prop->{min_servers} ){
-    $self->run_n_children( $prop->{min_servers} - $num{total} );
+  if( $total < $prop->{min_servers} ){
+    $self->run_n_children( $prop->{min_servers} - $total );
     
   ### need more spare_servers
   }elsif( $num{waiting} < $prop->{spare_servers} 
-          && $num{total} < $prop->{max_servers} ){
+          && $total < $prop->{max_servers} ){
     $self->run_n_children( $prop->{spare_servers} - $num{waiting} );
     
   ### need to remove some extra waiting servers
@@ -498,6 +533,9 @@ configurable parameters.
   check_for_dead    \d+                     30
   check_for_waiting \d+                     20
 
+  max_dequeue       \d+                     undef
+  check_for_dequeue \d+                     undef
+
 =over 4
 
 =item min_servers
@@ -553,6 +591,20 @@ A time period is used rather than min_spare_servers and
 max_spare_server parameters to avoid constant forking and 
 killing when client requests are coming in close to the 
 spare server thresholds.
+
+=item max_dequeue
+
+The maximum number of dequeue processes to start.  If a
+value of zero or undef is given, no dequeue processes will
+be started.  The number of running dequeue processes will
+be checked by the check_for_dead variable.
+
+=item check_for_dequeue
+
+Seconds to wait before forking off a dequeue process.  It
+is intended to use the dequeue process to take care of 
+items such as mail queues.  If a value of undef is given,
+no dequeue processes will be started.
 
 =back
 
