@@ -2,7 +2,7 @@
 #
 #  Net::Server - bdpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.43 2002/06/20 20:01:59 rhandom Exp $
+#  $Id: Server.pm,v 1.47 2003/03/06 17:08:27 hookbot Exp $
 #
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul at seamons.com
@@ -34,7 +34,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.84';
+$VERSION = '0.85';
 
 ### program flow
 sub run {
@@ -200,12 +200,13 @@ sub post_configure {
     $prop->{syslog_facility} = ($fac =~ /^((\w+)($|\|))*/)
       ? $1 : 'daemon';
 
-    require "Sys/Syslog.pm";
+    require Sys::Syslog;
     Sys::Syslog::setlogsock($prop->{syslog_logsock}) || die "Syslog err [$!]";
-    Sys::Syslog::openlog(   $prop->{syslog_ident},
-                            $prop->{syslog_logopt},
-                            $prop->{syslog_facility},
-                            ) || die "Couldn't open syslog [$!]";
+    if( ! Sys::Syslog::openlog($prop->{syslog_ident},
+                               $prop->{syslog_logopt},
+                               $prop->{syslog_facility}) ){
+      die "Couldn't open syslog [$!]" if $prop->{syslog_logopt} ne 'ndelay';
+    }
 
   ### open a logging file
   }elsif( $prop->{log_file} ){
@@ -439,7 +440,7 @@ sub post_bind {
     }
     if( $prop->{chown_log_file} ){
       delete $prop->{chown_log_file};
-      push @chown_files, $prop->{log_file};      
+      push @chown_files, $prop->{log_file};
     }
     my $uid = $prop->{user};
     my $gid = (split(/\ /,$prop->{group}))[0];
@@ -750,7 +751,7 @@ sub process_request {
   ### handle udp packets (udp echo server)
   if( $prop->{udp_true} ){
     if( $prop->{udp_data} =~ /dump/ ){
-      require "Data/Dumper.pm";
+      require Data::Dumper;
       $prop->{client}->send( Data::Dumper::Dumper( $self ) , 0);
     }else{
       $prop->{client}->send("You said \"$prop->{udp_data}\"", 0 );
@@ -781,7 +782,7 @@ sub process_request {
       }
 
       if( /dump/ ){
-        require "Data/Dumper.pm";
+        require Data::Dumper;
         print Data::Dumper::Dumper( $self );
       }
 
@@ -1156,7 +1157,7 @@ sub process_conf {
   my @args = ();
 
   if( ! $self->{server}->{conf_file_args} ){
-    $file = ($file =~ m|^([\w\.\-/]+)$|)
+    $file = ($file =~ m|^([\w\.\-\/\\\:]+)$|)
       ? $1 : $self->fatal("Unsecure filename \"$file\"");
 
     if( not open(_CONF,"<$file") ){

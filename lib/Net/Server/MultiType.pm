@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #  
-#  $Id: MultiType.pm,v 1.3 2001/11/19 19:47:20 rhandom Exp $
+#  $Id: MultiType.pm,v 1.4 2002/09/24 16:24:40 rhandom Exp $
 #  
 #  Copyright (C) 2001, Paul T Seamons
 #                      paul@seamons.com
@@ -54,6 +54,8 @@ sub run {
   ### save for a HUP
   $prop->{commandline} = [ $0, @ARGV ]
     unless defined $prop->{commandline};
+
+  $self->configure_hook;      # user customizable hook
 
   ### do the configuration now
   $self->configure(@_);
