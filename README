@@ -82,69 +82,65 @@ PERSONALITIES
     each of which has their own use.
 
     Fork
-        Found in the module Net/Server/Fork.pm (see the Net::Server::Fork
-        manpage). This server binds to one or more ports and then waits for
-        a connection. When a client request is received, the parent forks a
-        child, which then handles the client and exits. This is good for
-        moderately hit services.
+        Found in the module Net/Server/Fork.pm (see Net::Server::Fork). This
+        server binds to one or more ports and then waits for a connection.
+        When a client request is received, the parent forks a child, which
+        then handles the client and exits. This is good for moderately hit
+        services.
 
     INET
-        Found in the module Net/Server/INET.pm (see the Net::Server::INET
-        manpage). This server is designed to be used with inetd. The
-        "pre_bind", "bind", "accept", and "post_accept" are all overridden
-        as these services are taken care of by the INET daemon.
+        Found in the module Net/Server/INET.pm (see Net::Server::INET). This
+        server is designed to be used with inetd. The "pre_bind", "bind",
+        "accept", and "post_accept" are all overridden as these services are
+        taken care of by the INET daemon.
 
     MultiType
-        Found in the module Net/Server/MultiType.pm (see the
-        Net::Server::MultiType manpage). This server has no server
-        functionality of its own. It is designed for servers which need a
-        simple way to easily switch between different personalities.
-        Multiple "server_type" parameters may be given and
-        Net::Server::MultiType will cycle through until it finds a class
-        that it can use.
+        Found in the module Net/Server/MultiType.pm (see
+        Net::Server::MultiType). This server has no server functionality of
+        its own. It is designed for servers which need a simple way to
+        easily switch between different personalities. Multiple
+        "server_type" parameters may be given and Net::Server::MultiType
+        will cycle through until it finds a class that it can use.
 
     Multiplex
-        Found in the module Net/Server/Multiplex.pm (see the
-        Net::Server::Multiplex manpage). This server binds to one or more
-        ports. It uses IO::Multiplex to multiplex between waiting for new
-        connections and waiting for input on currently established
-        connections. This personality is designed to run as one process
-        without forking. The "process_request" method is never used but the
-        "mux_input" callback is used instead (see also the IO::Multiplex
-        manpage). See examples/samplechat.pl for an example using most of
-        the features of Net::Server::Multiplex.
+        Found in the module Net/Server/Multiplex.pm (see
+        Net::Server::Multiplex). This server binds to one or more ports. It
+        uses IO::Multiplex to multiplex between waiting for new connections
+        and waiting for input on currently established connections. This
+        personality is designed to run as one process without forking. The
+        "process_request" method is never used but the "mux_input" callback
+        is used instead (see also IO::Multiplex). See examples/samplechat.pl
+        for an example using most of the features of Net::Server::Multiplex.
 
     PreForkSimple
-        Found in the module Net/Server/PreFork.pm (see the
-        Net::Server::PreFork manpage). This server binds to one or more
-        ports and then forks "max_servers" child process. The server will
-        make sure that at any given time there are always "max_servers"
-        available to receive a client request. Each of these children will
-        process up to "max_requests" client connections. This type is good
-        for a heavily hit site that can dedicate max_server processes no
-        matter what the load. It should scale well for most applications.
-        Multi port accept is accomplished using either flock,
-        IPC::Semaphore, or pipe to serialize the children. Serialization may
-        also be switched on for single port in order to get around an OS
-        that does not allow multiple children to accept at the same time.
-        For a further discussion of serialization see the
-        Net::Server::PreFork manpage.
+        Found in the module Net/Server/PreFork.pm (see
+        Net::Server::PreFork). This server binds to one or more ports and
+        then forks "max_servers" child process. The server will make sure
+        that at any given time there are always "max_servers" available to
+        receive a client request. Each of these children will process up to
+        "max_requests" client connections. This type is good for a heavily
+        hit site that can dedicate max_server processes no matter what the
+        load. It should scale well for most applications. Multi port accept
+        is accomplished using either flock, IPC::Semaphore, or pipe to
+        serialize the children. Serialization may also be switched on for
+        single port in order to get around an OS that does not allow
+        multiple children to accept at the same time. For a further
+        discussion of serialization see Net::Server::PreFork.
 
     PreFork
-        Found in the module Net/Server/PreFork.pm (see the
-        Net::Server::PreFork manpage). This server binds to one or more
-        ports and then forks "min_servers" child process. The server will
-        make sure that at any given time there are at least
-        "min_spare_servers" but not more than "max_spare_servers" available
-        to receive a client request, up to "max_servers". Each of these
-        children will process up to "max_requests" client connections. This
-        type is good for a heavily hit site, and should scale well for most
-        applications. Multi port accept is accomplished using either flock,
-        IPC::Semaphore, or pipe to serialize the children. Serialization may
-        also be switched on for single port in order to get around an OS
-        that does not allow multiple children to accept at the same time.
-        For a further discussion of serialization see the
-        Net::Server::PreFork manpage.
+        Found in the module Net/Server/PreFork.pm (see
+        Net::Server::PreFork). This server binds to one or more ports and
+        then forks "min_servers" child process. The server will make sure
+        that at any given time there are at least "min_spare_servers" but
+        not more than "max_spare_servers" available to receive a client
+        request, up to "max_servers". Each of these children will process up
+        to "max_requests" client connections. This type is good for a
+        heavily hit site, and should scale well for most applications. Multi
+        port accept is accomplished using either flock, IPC::Semaphore, or
+        pipe to serialize the children. Serialization may also be switched
+        on for single port in order to get around an OS that does not allow
+        multiple children to accept at the same time. For a further
+        discussion of serialization see Net::Server::PreFork.
 
     Single
         All methods fall back to Net::Server. This personality is provided
@@ -332,33 +328,31 @@ ARGUMENTS
 
     syslog_logsock
         Only available if "log_file" is equal to "Sys::Syslog". May be
-        either "unix" of "inet". Default is "unix". See the Sys::Syslog
-        manpage.
+        either "unix" of "inet". Default is "unix". See Sys::Syslog.
 
     syslog_ident
         Only available if "log_file" is equal to "Sys::Syslog". Id to
-        prepend on syslog entries. Default is "net_server". See the
-        Sys::Syslog manpage.
+        prepend on syslog entries. Default is "net_server". See Sys::Syslog.
 
     syslog_logopt
         Only available if "log_file" is equal to "Sys::Syslog". May be
         either zero or more of "pid","cons","ndelay","nowait". Default is
-        "pid". See the Sys::Syslog manpage.
+        "pid". See Sys::Syslog.
 
     syslog_facility
-        Only available if "log_file" is equal to "Sys::Syslog". See the
-        Sys::Syslog manpage and the syslog manpage. Default is "daemon".
+        Only available if "log_file" is equal to "Sys::Syslog". See
+        Sys::Syslog and syslog. Default is "daemon".
 
     port
-        See the Net::Server::Proto manpage. Local port/socket on which to
-        bind. If low port, process must start as root. If multiple ports are
-        given, all will be bound at server startup. May be of the form
+        See Net::Server::Proto. Local port/socket on which to bind. If low
+        port, process must start as root. If multiple ports are given, all
+        will be bound at server startup. May be of the form
         "host:port/proto", "host:port", "port/proto", or "port", where
         *host* represents a hostname residing on the local box, where *port*
         represents either the number of the port (eg. "80") or the service
         designation (eg. "http"), and where *proto* represents the protocol
-        to be used. See the Net::Server::Proto manpage. If you are working
-        with unix sockets, you may also specify "socket_file|unix" or
+        to be used. See Net::Server::Proto. If you are working with unix
+        sockets, you may also specify "socket_file|unix" or
         "socket_file|type|unix" where type is SOCK_DGRAM or SOCK_STREAM. If
         the protocol is not specified, *proto* will default to the "proto"
         specified in the arguments. If "proto" is not specified there it
@@ -369,15 +363,13 @@ ARGUMENTS
     host
         Local host or addr upon which to bind port. If a value of '*' is
         given, the server will bind that port on all available addresses on
-        the box. See the Net::Server::Proto manpage. See the IO::Socket
-        manpage.
+        the box. See Net::Server::Proto. See IO::Socket.
 
     proto
-        See the Net::Server::Proto manpage. Protocol to use when binding
-        ports. See the IO::Socket manpage. As of release 0.70, Net::Server
-        supports tcp, udp, and unix. Other types will need to be added later
-        (or custom modules extending the Net::Server::Proto class may be
-        used).
+        See Net::Server::Proto. Protocol to use when binding ports. See
+        IO::Socket. As of release 0.70, Net::Server supports tcp, udp, and
+        unix. Other types will need to be added later (or custom modules
+        extending the Net::Server::Proto class may be used).
 
     listen
           See L<IO::Socket>.  Not used with udp protocol (or UNIX SOCK_DGRAM).
@@ -745,10 +737,9 @@ THANKS
     parent/child communication on PreFork.pm.
 
 SEE ALSO
-    Please see also the Net::Server::Fork manpage, the Net::Server::INET
-    manpage, the Net::Server::PreForkSimple manpage, the
-    Net::Server::PreFork manpage, the Net::Server::MultiType manpage, the
-    Net::Server::Single manpage
+    Please see also Net::Server::Fork, Net::Server::INET,
+    Net::Server::PreForkSimple, Net::Server::PreFork,
+    Net::Server::MultiType, Net::Server::Single
 
 COPYRIGHT
       Copyright (C) 2001, Paul T Seamons

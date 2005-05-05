@@ -199,7 +199,8 @@ sub get_gid {
 ### change the process to run as this uid
 sub set_uid {
   my $uid = get_uid( shift() );
-  $< = $> = $uid;
+  $< = $uid;
+  $> = $uid;
   if( $< != $uid ){
     die "Couldn't become uid \"$uid\"\n";
   }

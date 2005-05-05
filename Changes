@@ -1,5 +1,8 @@
 Revision history for Perl extension Net::Server.
 
+0.88  May 04 2005
+	- Patch by Daniel J. Wright to fix RT #5450
+
 0.87  Feb 14 2004
         - Patch by Enrik.Berkhan@planb.de (Enrik Berkhan)
           that fixes RT Bug #3671
