@@ -1,20 +1,22 @@
 # -*- perl -*-
 #
 #  Net::Server::Proto::UDP - Net::Server Protocol module
-#  
-#  $Id: UDP.pm,v 1.7 2001/08/17 15:52:27 rhandom Exp $
-#  
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
-#  
+#
+#  $Id: UDP.pm,v 1.8 2005/06/20 18:53:59 rhandom Exp $
+#
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
 #  This package may be distributed under the terms of either the
-#  GNU General Public License 
+#  GNU General Public License
 #    or the
 #  Perl Artistic License
 #
 #  All rights reserved.
-#  
+#
 ################################################################
 
 package Net::Server::Proto::UDP;

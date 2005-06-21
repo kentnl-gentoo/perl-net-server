@@ -2,12 +2,15 @@
 #
 #  Net::Server - bdpO - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.53 2003/11/06 20:36:22 hookbot Exp $
+#  $Id: Server.pm,v 1.65 2005/06/21 21:16:03 rhandom Exp $
 #
-#  Copyright (C) 2001-2003
-#    Paul T Seamons (paul at seamons.com)
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
 #    http://seamons.com/
-#    Rob Brown (bbb at cpan.org)
+#
+#    Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -16,15 +19,13 @@
 #
 #  All rights reserved.
 #
-#  Please read the perldoc Net::Server
-#
 ################################################################
 
 package Net::Server;
 
 use strict;
-use vars qw( $VERSION );
-use Socket qw( inet_aton inet_ntoa AF_INET AF_UNIX SOCK_DGRAM SOCK_STREAM );
+use vars qw($VERSION);
+use Socket qw(inet_aton inet_ntoa AF_INET AF_UNIX SOCK_DGRAM SOCK_STREAM);
 use IO::Socket ();
 use IO::Select ();
 use POSIX ();
@@ -47,7 +48,9 @@ sub run {
   $self->{server} = {} unless defined($self->{server}) && ref($self->{server});
 
   ### save for a HUP
-  $self->{server}->{commandline} = [ $0, @ARGV ]
+  my $script = $0;
+  $script = $ENV{'PWD'} .'/'. $0 if $ENV{'PWD'};
+  $self->{server}->{commandline} = [ $script, @ARGV ]
     unless defined $self->{server}->{commandline};
 
   ### prepare to cache configuration parameters
@@ -184,7 +187,7 @@ sub post_configure {
 
     my $logsock = defined($prop->{syslog_logsock})
       ? $prop->{syslog_logsock} : 'unix';
-    $prop->{syslog_logsock} = ($logsock =~ /^(unix|inet)$/)
+    $prop->{syslog_logsock} = ($logsock =~ /^(unix|inet|stream)$/)
       ? $1 : 'unix';
 
     my $ident = defined($prop->{syslog_ident})
@@ -214,7 +217,7 @@ sub post_configure {
   }elsif( $prop->{log_file} ){
 
     die "Unsecure filename \"$prop->{log_file}\""
-      unless $prop->{log_file} =~ m|^([\w\.\-/]+)$|;
+      unless $prop->{log_file} =~ m|^([\w\.\-/\\]+)$|;
     $prop->{log_file} = $1;
     open(_SERVER_LOG, ">>$prop->{log_file}")
       or die "Couldn't open log file \"$prop->{log_file}\" [$!].";
@@ -272,6 +275,8 @@ sub post_configure {
   ### make sure that allow and deny look like array refs
   $prop->{allow} = [] unless defined($prop->{allow}) && ref($prop->{allow});
   $prop->{deny}  = [] unless defined($prop->{deny})  && ref($prop->{deny} );
+  $prop->{cidr_allow} = [] unless defined($prop->{cidr_allow}) && ref($prop->{cidr_allow});
+  $prop->{cidr_deny}  = [] unless defined($prop->{cidr_deny})  && ref($prop->{cidr_deny} );
 
 }
 
@@ -404,7 +409,7 @@ sub post_bind {
     $self->log(1,"Group Not Defined.  Defaulting to EGID '$)'\n");
     $prop->{group}  = $);
   }else{
-    if( $prop->{group} =~ /^(\w+( \w+)*)$/ ){
+    if( $prop->{group} =~ /^([\w-]+( [\w-]+)*)$/ ){
       $prop->{group} = eval{ get_gid( $1 ) };
       $self->fatal( $@ ) if $@;
     }else{
@@ -717,18 +722,31 @@ sub allow_deny {
   }
 
   ### if no allow or deny parameters are set, allow all
-  return 1 unless @{ $prop->{allow} } || @{ $prop->{deny} };
+  return 1 if
+       $#{ $prop->{allow} } == -1
+    && $#{ $prop->{deny} }  == -1
+    && $#{ $prop->{cidr_allow} } == -1
+    && $#{ $prop->{cidr_deny} }  == -1;
 
   ### if the addr or host matches a deny, reject it immediately
   foreach ( @{ $prop->{deny} } ){
     return 0 if $prop->{peerhost} =~ /^$_$/ && defined($prop->{reverse_lookups});
     return 0 if $prop->{peeraddr} =~ /^$_$/;
   }
+  if ($#{ $prop->{cidr_deny} } != -1) {
+    require Net::CIDR;
+    return 0 if Net::CIDR::cidrlookup($prop->{peeraddr}, @{ $prop->{cidr_deny} });
+  }
+
 
   ### if the addr or host isn't blocked yet, allow it if it is allowed
   foreach ( @{ $prop->{allow} } ){
     return 1 if $prop->{peerhost} =~ /^$_$/ && defined($prop->{reverse_lookups});
     return 1 if $prop->{peeraddr} =~ /^$_$/;
+  }
+  if ($#{ $prop->{cidr_allow} } != -1) {
+    require Net::CIDR;
+    return 0 if Net::CIDR::cidrlookup($prop->{peeraddr}, @{ $prop->{cidr_allow} });
   }
 
   return 0;
@@ -942,7 +960,7 @@ sub close_children {
 
   ### need to wait off the children
   ### eventually this should probably use &check_sigs
-  1 while (waitpid(-1,POSIX::WNOHANG()) > 0);
+  1 while waitpid(-1, POSIX::WNOHANG()) > 0;
 
 }
 
@@ -1036,9 +1054,8 @@ $Net::Server::syslog_map = {0 => 'err',
 
 ### record output
 sub log {
-  my $self  = shift;
+  my ($self, $level, $msg) = @_;
   my $prop = $self->{server};
-  my $level = shift;
 
   return unless $prop->{log_level};
   return unless $level <= $prop->{log_level};
@@ -1046,31 +1063,29 @@ sub log {
   ### log only to syslog if setup to do syslog
   if( $prop->{log_file} eq 'Sys::Syslog' ){
     $level = $level!~/^\d+$/ ? $level : $Net::Server::syslog_map->{$level} ;
-    Sys::Syslog::syslog($level,@_);
+    Sys::Syslog::syslog($level, '%s', $msg);
     return;
   }
 
-  $self->write_to_log_hook($level,@_);
+  $self->write_to_log_hook($level, $msg);
 }
 
 
 ### standard log routine, this could very easily be
 ### overridden with a syslog call
 sub write_to_log_hook {
-  my $self  = shift;
+  my ($self, $level, $msg) = @_;
   my $prop = $self->{server};
-  my $level = shift;
-  local $_  = shift || '';
-  chomp;
-  s/([^\n\ -\~])/sprintf("%%%02X",ord($1))/eg;
+  chomp $msg;
+  $msg =~ s/([^\n\ -\~])/sprintf("%%%02X",ord($1))/eg;
 
   if( $prop->{log_file} ){
-    print _SERVER_LOG $_, "\n";
+    print _SERVER_LOG $msg, "\n";
   }elsif( defined($prop->{setsid}) ){
     # do nothing
   }else{
     my $old = select(STDERR);
-    print $_. "\n";
+    print $msg. "\n";
     select($old);
   }
 
@@ -1092,8 +1107,12 @@ sub options {
   my $prop = $self->{server};
   my $ref  = shift;
 
-  foreach ( qw(port allow deny) ){
-    $prop->{$_} = [] unless exists $prop->{$_};
+  foreach ( qw(port allow deny cidr_allow cidr_deny) ){
+    if (! defined $prop->{$_}) {
+      $prop->{$_} = [];
+    } elsif (! ref $prop->{$_}) {
+      $prop->{$_} = [$prop->{$_}]; # nicely turn us into an arrayref if we aren't one already
+    }
     $ref->{$_} = $prop->{$_};
   }
 
@@ -1187,10 +1206,15 @@ sub delete_child {
   my $pid  = shift;
   my $prop = $self->{server};
 
+  ### don't remove children that don't belong to me (Christian Mock, Luca Filipozzi)
+  return unless exists $prop->{children}->{$pid};
+
   ### prefork server check to clear child communication
   if( $prop->{child_communication} ){
-    $prop->{child_select}->remove( $prop->{children}->{$pid}->{sock} );
-    $prop->{children}->{$pid}->{sock}->close();
+    if ($prop->{children}->{$pid}->{sock}) {
+      $prop->{child_select}->remove( $prop->{children}->{$pid}->{sock} );
+      $prop->{children}->{$pid}->{sock}->close;
+    }
   }
 
   delete $prop->{children}->{$pid};
@@ -1548,6 +1572,8 @@ parameters from the base class.)
   reverse_lookups   1                        undef
   allow             /regex/                  none
   deny              /regex/                  none
+  cidr_allow        CIDR                     none
+  cidr_deny         CIDR                     none
 
   ## daemonization parameters
   pid_file          "filename"               undef
@@ -1673,6 +1699,13 @@ incoming client must match an allow and not match a deny or
 the client connection will be closed.  Defaults to empty
 array refs.
 
+=item cidr_allow/cidr_deny
+
+May be specified multiple times.  Contains a CIDR block to compare to
+incoming peeraddr.  If cidr_allow or cidr_deny options are given, the
+incoming client must match a cidr_allow and not match a cidr_deny or
+the client connection will be closed.  Defaults to empty array refs.
+
 =item chroot
 
 Directory to chroot to after bind process has taken place
@@ -1787,6 +1820,9 @@ ignored.
   allow       .+\.(net|com)
   allow       domain\.com
   deny        a.+
+  cidr_allow  127.0.0.0/8
+  cidr_allow  192.0.2.0/24
+  cidr_deny   192.0.2.4/30
 
   ### background the process?
   background  1
@@ -2090,6 +2126,10 @@ numerous suggestions and for work on Net::Server::Daemonize.
 Thanks to Vadim <vadim at hardison.net> for patches to
 implement parent/child communication on PreFork.pm.
 
+Thanks to various other people for bug fixes over the years.
+These and future thank-you's are available in the Changes file
+as well as CVS comments.
+
 =head1 SEE ALSO
 
 Please see also
@@ -2100,11 +2140,13 @@ L<Net::Server::PreFork>,
 L<Net::Server::MultiType>,
 L<Net::Server::Single>
 
-=head1 COPYRIGHT
+=head1 AUTHOR
 
-  Copyright (C) 2001, Paul T Seamons
-                      paul at seamons.com
-                      http://seamons.com/
+  Paul Seamons <paul@seamons.com>
+
+  Rob Brown <bbb@cpan.org>
+
+=head1 LICENSE
 
   This package may be distributed under the terms of either the
   GNU General Public License

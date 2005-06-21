@@ -1,20 +1,22 @@
 # -*- perl -*-
 #
 #  Net::Server::INET - Net::Server personality
-#  
-#  $Id: INET.pm,v 1.5 2002/06/20 20:02:07 rhandom Exp $
-#  
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
-#  
+#
+#  $Id: INET.pm,v 1.6 2005/06/20 18:48:50 rhandom Exp $
+#
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
 #  This package may be distributed under the terms of either the
-#  GNU General Public License 
+#  GNU General Public License
 #    or the
 #  Perl Artistic License
 #
 #  All rights reserved.
-#  
+#
 ################################################################
 
 package Net::Server::INET;

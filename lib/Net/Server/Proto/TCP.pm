@@ -1,20 +1,22 @@
 # -*- perl -*-
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
-#  
-#  $Id: TCP.pm,v 1.9 2002/06/20 19:53:56 rhandom Exp $
-#  
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
-#  
+#
+#  $Id: TCP.pm,v 1.10 2005/06/20 18:53:23 rhandom Exp $
+#
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
 #  This package may be distributed under the terms of either the
-#  GNU General Public License 
+#  GNU General Public License
 #    or the
 #  Perl Artistic License
 #
 #  All rights reserved.
-#  
+#
 ################################################################
 
 package Net::Server::Proto::TCP;

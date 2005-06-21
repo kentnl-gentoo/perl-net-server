@@ -2,9 +2,15 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.11 2003/11/01 19:48:21 hookbot Exp $
+#  $Id: Multiplex.pm,v 1.13 2005/06/20 19:01:10 rhandom Exp $
 #
-#  Copyright (C) 2001-2003, Rob Brown <bbb@cpan.org>
+#  Copyright (C) 2001-2005
+#
+#    Rob Brown bbb@cpan,org
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -509,19 +515,22 @@ interface to comply with the Net::Server::Fork style run_dequeue but
 is implemented in terms of the IO::Multiplex style set_timeout and
 mux_timeout methods.
 
-Please notify me, the author, of any other problems or issues
-you find.
-
 =head1 AUTHOR
 
-Copyright (C) 2001-2003, Rob Brown <bbb@cpan.org>
+Rob Brown <bbb@cpan.org>
 
-This package may be distributed under the terms of either the
-GNU General Public License
-   or the
-Perl Artistic License
+=head1 MAINTAINER
 
-All rights reserved.
+Paul Seamons <paul@seamons.com>
+
+=head1 LICENSE
+
+  This package may be distributed under the terms of either the
+  GNU General Public License
+     or the
+  Perl Artistic License
+
+  All rights reserved.
 
 =head1 SEE ALSO
 

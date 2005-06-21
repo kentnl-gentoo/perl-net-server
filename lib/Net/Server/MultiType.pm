@@ -1,20 +1,22 @@
 # -*- perl -*-
 #
 #  Net::Server::MultiType - Net::Server personality
-#  
-#  $Id: MultiType.pm,v 1.4 2002/09/24 16:24:40 rhandom Exp $
-#  
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
-#  
+#
+#  $Id: MultiType.pm,v 1.5 2005/06/20 18:48:31 rhandom Exp $
+#
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
 #  This package may be distributed under the terms of either the
-#  GNU General Public License 
+#  GNU General Public License
 #    or the
 #  Perl Artistic License
 #
 #  All rights reserved.
-#  
+#
 ################################################################
 
 package Net::Server::MultiType;

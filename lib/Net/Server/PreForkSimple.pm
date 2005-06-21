@@ -1,12 +1,16 @@
 # -*- perl -*-
 #
 #  Net::Server::PreForkSimple - Net::Server personality
-#  
-#  $Id: PreForkSimple.pm,v 1.7 2003/03/06 18:30:51 hookbot Exp $
-#  
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
+#
+#  $Id: PreForkSimple.pm,v 1.17 2005/06/21 20:35:30 rhandom Exp $
+#
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
+#    Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -19,17 +23,15 @@
 
 package Net::Server::PreForkSimple;
 
+use base qw(Net::Server);
 use strict;
-use vars qw($VERSION @ISA $LOCK_EX $LOCK_UN);
-use POSIX qw(WNOHANG);
+use vars qw($VERSION);
+use POSIX qw(WNOHANG EINTR);
 use Fcntl ();
-use Net::Server ();
 use Net::Server::SIG qw(register_sig check_sigs);
 
 $VERSION = $Net::Server::VERSION; # done until separated
 
-### fall back to parent methods
-@ISA = qw(Net::Server);
 
 ### override-able options for this package
 sub options {
@@ -149,6 +151,8 @@ sub run_n_children {
   my $n     = shift;
   return unless $n > 0;
 
+  $self->run_n_children_hook;
+
   $self->log(3,"Starting \"$n\" children");
 
   for( 1..$n ){
@@ -170,32 +174,33 @@ sub run_n_children {
   }
 }
 
+### let the parent have more accounting upon startup of children
+sub run_n_children_hook {}
+
 ### child process which will accept on the port
 sub run_child {
   my $self = shift;
   my $prop = $self->{server};
 
-  ### restore sigs (turn off warnings during)
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT}
-    = $SIG{CHLD} = sub {
-      $self->child_finish_hook;
-      exit;
-    };
-
-  $self->log(4,"Child Preforked ($$)\n");
-
-  $self->child_init_hook;
-
-  ### let the parent shut me down
-  $prop->{connected} = 0;
-  $prop->{SigHUPed}  = 0;
-  $SIG{HUP} = sub {
-    unless( $prop->{connected} ){
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub {
+    $self->child_finish_hook;
+    exit;
+  };
+  $SIG{PIPE} = 'IGNORE';
+  $SIG{CHLD} = 'DEFAULT';
+  $SIG{HUP}  = sub {
+    if (! $prop->{connected}) {
       $self->child_finish_hook;
       exit;
     }
     $prop->{SigHUPed} = 1;
   };
+
+  $self->log(4,"Child Preforked ($$)\n");
+
+  delete $prop->{children};
+
+  $self->child_init_hook;
 
   ### accept connections
   while( $self->accept() ){
@@ -238,8 +243,10 @@ sub accept {
   if( $prop->{serialize} eq 'flock' ){
     open(LOCK,">$prop->{lock_file}")
       || $self->fatal("Couldn't open lock file \"$prop->{lock_file}\" [$!]");
-    flock(LOCK,Fcntl::LOCK_EX())
-      || $self->fatal("Couldn't get lock on file \"$prop->{lock_file}\" [$!]");
+    while (! flock(LOCK, Fcntl::LOCK_EX())) {
+      next if $! == EINTR;
+      $self->fatal("Couldn't get lock on file \"$prop->{lock_file}\" [$!]");
+    }
 
   }elsif( $prop->{serialize} eq 'semaphore' ){
     $prop->{sem}->op( 0, -1, IPC::SysV::SEM_UNDO() )
@@ -276,6 +283,9 @@ sub accept {
 sub done {
   my $self = shift;
   my $prop = $self->{server};
+  $prop->{done} = shift if @_;
+  return 1 if $prop->{done};
+
   return 1 if $prop->{requests} >= $prop->{max_requests};
   return 1 if $prop->{SigHUPed};
   if( ! kill(0,$prop->{ppid}) ){
@@ -388,7 +398,7 @@ Net::Server::PreForkSimple - Net::Server personality
 =head1 SYNOPSIS
 
   use Net::Server::PreForkSimple;
-  @ISA = qw(Net::Server::PreFork);
+  @ISA = qw(Net::Server::PreForkSimple);
 
   sub process_request {
      #...code...
@@ -550,6 +560,13 @@ to the hooks provided by the Net::Server base class.
 See L<Net::Server>
 
 =over 4
+
+=item C<$self-E<gt>run_n_children_hook()>
+
+This hook occurs at the top of run_n_children which is called
+each time the server goes to start more child processes.  This
+gives the parent to do a little of its own accountting (as desired).
+Idea for this hook came from James FitzGibbon.
 
 =item C<$self-E<gt>child_init_hook()>
 

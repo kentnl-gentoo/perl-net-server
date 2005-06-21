@@ -285,6 +285,8 @@ ARGUMENTS
       reverse_lookups   1                        undef
       allow             /regex/                  none
       deny              /regex/                  none
+      cidr_allow        CIDR                     none
+      cidr_deny         CIDR                     none
 
       ## daemonization parameters
       pid_file          "filename"               undef
@@ -386,6 +388,12 @@ ARGUMENTS
         an allow and not match a deny or the client connection will be
         closed. Defaults to empty array refs.
 
+    cidr_allow/cidr_deny
+        May be specified multiple times. Contains a CIDR block to compare to
+        incoming peeraddr. If cidr_allow or cidr_deny options are given, the
+        incoming client must match a cidr_allow and not match a cidr_deny or
+        the client connection will be closed. Defaults to empty array refs.
+
     chroot
         Directory to chroot to after bind process has taken place and the
         server is still running as root. Defaults to undef.
@@ -480,6 +488,9 @@ CONFIGURATION FILE
       allow       .+\.(net|com)
       allow       domain\.com
       deny        a.+
+      cidr_allow  127.0.0.0/8
+      cidr_allow  192.0.2.0/24
+      cidr_deny   192.0.2.4/30
 
       ### background the process?
       background  1
@@ -736,16 +747,21 @@ THANKS
     Thanks to Vadim <vadim at hardison.net> for patches to implement
     parent/child communication on PreFork.pm.
 
+    Thanks to various other people for bug fixes over the years. These and
+    future thank-you's are available in the Changes file as well as CVS
+    comments.
+
 SEE ALSO
     Please see also Net::Server::Fork, Net::Server::INET,
     Net::Server::PreForkSimple, Net::Server::PreFork,
     Net::Server::MultiType, Net::Server::Single
 
-COPYRIGHT
-      Copyright (C) 2001, Paul T Seamons
-                          paul at seamons.com
-                          http://seamons.com/
+AUTHOR
+      Paul Seamons <paul@seamons.com>
 
+      Rob Brown <bbb@cpan.org>
+
+LICENSE
       This package may be distributed under the terms of either the
       GNU General Public License
         or the

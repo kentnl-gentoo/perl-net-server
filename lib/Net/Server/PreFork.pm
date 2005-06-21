@@ -2,13 +2,15 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #
-#  $Id: PreFork.pm,v 1.17 2004/02/15 05:52:50 hookbot Exp $
+#  $Id: PreFork.pm,v 1.24 2005/06/21 20:54:56 rhandom Exp $
 #
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
+#  Copyright (C) 2001-2005
 #
-#  Copyright (C) 2003-2004, Rob Brown bbb@cpan,org
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
+#    Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -21,19 +23,15 @@
 
 package Net::Server::PreFork;
 
+use base qw(Net::Server::PreForkSimple);
 use strict;
-use vars qw($VERSION @ISA $LOCK_EX $LOCK_UN);
+use vars qw($VERSION);
 use POSIX qw(WNOHANG);
-use Net::Server::PreForkSimple;
 use Net::Server::SIG qw(register_sig check_sigs);
 use IO::Select ();
 use IO::Socket::UNIX;
 
 $VERSION = $Net::Server::VERSION; # done until separated
-
-### fall back to parent methods
-@ISA = qw(Net::Server::PreForkSimple);
-
 
 ### override-able options for this package
 sub options {
@@ -77,11 +75,13 @@ information.
   $self->SUPER::post_configure;
 
   ### some default values to check for
-  my $d = {min_servers       => 5,    # min num of servers to always have running
-           min_spare_servers => 2,    # min num of servers just sitting there
-           max_spare_servers => 10,   # max num of servers just sitting there
-           check_for_waiting => 10,   # how often to see if children laying around
-           };
+  my $d = {
+    # max_servers is set in the PreForkSimple server and defaults to 50
+    min_servers       => 5,    # min num of servers to always have running
+    min_spare_servers => 2,    # min num of servers just sitting there
+    max_spare_servers => 10,   # max num of servers just sitting there
+    check_for_waiting => 10,   # how often to see if children laying around
+  };
   foreach (keys %$d){
     $prop->{$_} = $d->{$_}
     unless defined($prop->{$_}) && $prop->{$_} =~ /^\d+$/;
@@ -112,7 +112,8 @@ sub loop {
 
   ### get ready for child->parent communication
   pipe(_READ,_WRITE);
-  _WRITE->autoflush(1); # ASAP, before first child is ever forked
+  _READ->autoflush(1); # ASAP, before first child is ever forked
+  _WRITE->autoflush(1);
   $prop->{_READ}  = *_READ;
   $prop->{_WRITE} = *_WRITE;
 
@@ -169,6 +170,8 @@ sub run_n_children {
   my $n     = shift;
   return unless $n > 0;
 
+  $self->run_n_children_hook;
+
   my ($parentsock, $childsock);
 
   $self->log(3,"Starting \"$n\" children");
@@ -213,21 +216,27 @@ sub run_n_children {
   }
 }
 
+### let the parent have more accounting upon startup of children
+sub run_n_children_hook {}
 
 ### child process which will accept on the port
 sub run_child {
   my $self = shift;
   my $prop = $self->{server};
 
-  ### restore sigs (turn off warnings during)
-  $SIG{INT} = $SIG{TERM} = $SIG{QUIT}
-    = $SIG{CHLD} = sub {
+  $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = sub {
+    $self->child_finish_hook;
+    exit;
+  };
+  $SIG{PIPE} = 'IGNORE';
+  $SIG{CHLD} = 'DEFAULT';
+  $SIG{HUP}  = sub {
+    if (! $prop->{connected}) {
       $self->child_finish_hook;
       exit;
-    };
-
-  ### let pipes take care of themselves
-  $SIG{PIPE} = sub { $prop->{SigPIPEd} = 1 };
+    }
+    $prop->{SigHUPed} = 1;
+  };
 
   $self->log(4,"Child Preforked ($$)\n");
 
@@ -235,24 +244,17 @@ sub run_child {
 
   $self->child_init_hook;
 
-  ### let the parent shut me down
-  $prop->{connected} = 0;
-  $prop->{SigHUPed}  = 0;
-  $SIG{HUP} = sub {
-    unless( $prop->{connected} ){
-      $self->child_finish_hook;
-      exit;
-    }
-    $prop->{SigHUPed} = 1;
-  };
-
   ### accept connections
   while( $self->accept() ){
 
     $prop->{connected} = 1;
     print _WRITE "$$ processing\n";
 
-    $self->run_client_connection;
+    eval { $self->run_client_connection };
+    if ($@) {
+      print _WRITE "$$ exiting\n";
+      die $@;
+    }
 
     last if $self->done;
 
@@ -279,11 +281,6 @@ sub run_parent {
 
   ### prepare to read from children
   local *_READ = $prop->{_READ};
-  _READ->autoflush(1);
-
-  ### allow for writing to _READ
-  local *_WRITE = $prop->{_WRITE};
-  _WRITE->autoflush(1);
 
   ### set some waypoints
   $prop->{last_checked_for_dead}
@@ -356,7 +353,7 @@ sub run_parent {
           $prop->{tally}->{waiting} ++;
         }elsif( $status eq 'exiting' ){
           $prop->{tally}->{processing} --;
-	  $self->delete_child( $pid );
+          $self->delete_child( $pid );
         }
 
       ### user defined handler
@@ -642,6 +639,13 @@ to the hooks provided by PreForkSimple.
 See L<Net::Server::PreForkSimple>.
 
 =over 4
+
+=item C<$self-E<gt>run_n_children_hook()>
+
+This hook occurs at the top of run_n_children which is called
+each time the server goes to start more child processes.  This
+gives the parent to do a little of its own accountting (as desired).
+Idea for this hook came from James FitzGibbon.
 
 =item C<$self-E<gt>parent_read_hook()>
 

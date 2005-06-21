@@ -1,24 +1,24 @@
 # -*- perl -*-
 #
 #  Net::Server::Daemonize - bdpf - Daemonization utilities.
-#  
-#  $Id: Daemonize.pm,v 1.8 2003/11/06 18:41:24 hookbot Exp $
-#  
-#  Copyright (C) 2001, Jeremy Howard
-#                      j+daemonize@howard.fm
 #
-#                      Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
-#  
+#  $Id: Daemonize.pm,v 1.11 2005/06/20 19:41:15 rhandom Exp $
+#
+#  Copyright (C) 2001-2005
+#
+#    Jeremy Howard
+#    j+daemonize@howard.fm
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
 #  This package may be distributed under the terms of either the
-#  GNU General Public License 
+#  GNU General Public License
 #    or the
 #  Perl Artistic License
 #
 #  All rights reserved.
-#  
-#  Please read the perldoc Net::Server
 #
 ################################################################
 
@@ -29,7 +29,7 @@ use vars qw( @ISA @EXPORT_OK $VERSION );
 use Exporter ();
 use POSIX qw(SIGINT SIG_BLOCK SIG_UNBLOCK);
 
-$VERSION = "0.04";
+$VERSION = "0.05";
 
 @ISA = qw(Exporter);
 
@@ -68,14 +68,14 @@ sub check_pid_file ($) {
 
   ### try a proc file system
   if( -d '/proc' && opendir(_DH,'/proc') ){
-    
+
     while ( defined(my $pid = readdir(_DH)) ){
       if( $pid eq $current_pid ){
         $exists = 1;
         last;
       }
     }
-    
+
   ### try ps
   #}elsif( -x '/bin/ps' ){ # not as portable
   # the ps command itself really isn't portable
@@ -83,18 +83,18 @@ sub check_pid_file ($) {
   # this will fail on Unix98 syntax ps (Solaris, etc)
   }elsif( `ps h o pid p $$` =~ /^\s*$$\s*$/ ){ # can I play ps on myself ?
     $exists = `ps h o pid p $current_pid`;
-    
+
   }
 
   ### running process exists, ouch
   if( $exists ){
-    
+
     if( $current_pid == $$ ){
       warn "Pid_file created by this same process. Doing nothing.\n";
       return 1;
     }else{
       die "Pid_file already exists for running process ($current_pid)... aborting\n";
-    }    
+    }
 
   ### remove the pid_file
   }else{
@@ -113,7 +113,7 @@ sub create_pid_file ($) {
 
   ### see if the pid_file is already there
   check_pid_file( $pid_file );
-  
+
   if( ! open(PID, ">$pid_file") ){
     die "Couldn't open pid file \"$pid_file\" [$!].\n";
   }
@@ -149,7 +149,7 @@ sub unlink_pid_file ($) {
 
   }else{
     die "Process $$ doesn't own pid_file \"$pid_file\". Can't remove it.\n";
-    
+
   }
 
 }
@@ -171,7 +171,7 @@ sub get_uid ($) {
   }else{
     $uid = getpwnam($user);
   }
-  
+
   die "No such user \"$user\"\n" unless defined $uid;
 
   return $uid;
@@ -199,15 +199,12 @@ sub get_gid {
 ### change the process to run as this uid
 sub set_uid {
   my $uid = get_uid( shift() );
-  $< = $uid;
-  $> = $uid;
-  if( $< != $uid ){
-    die "Couldn't become uid \"$uid\"\n";
+
+  POSIX::setuid($uid);
+  if ($< != $uid) {
+    die "Couldn't become uid \"$uid\": $!\n";
   }
-  my $result = POSIX::setuid( $uid );
-  if( ! defined($result) ){
-    die "Couldn't POSIX::setuid to \"$uid\" [$!]\n";
-  }
+
   return 1;
 }
 
@@ -215,14 +212,15 @@ sub set_uid {
 ### multiple groups must be space or comma delimited
 sub set_gid {
   my $gids = get_gid( @_ );
-  my $gid  = (split(/\s+/,$gids))[0];
-  $) = $gids;
-  $( = $gid;
-  my $result = (split(/\s+/,$())[0];
-  if( $result != $gid ){
-    die "Couldn't become gid \"$gid\" ($result)\n";
+  my $gid  = (split /\s+/, $gids)[0];
+  eval { $) = $gids }; # store all the gids - this is really sort of optional
+
+  POSIX::setgid($gid);
+  my $_gid = (split /\s+/, $()[0];
+  if ($_gid != $gid) {
+    die "Couldn't become gid \"$gid\": $!\n";
   }
-  POSIX::setgid( $gid ) || die "Couldn't POSIX::setgid to \"$gid\" [$!]\n";
+
   return 1;
 }
 
@@ -238,12 +236,12 @@ sub set_user {
 
 ### routine to protect process during fork
 sub safe_fork () {
-  
+
   ### block signal for fork
   my $sigset = POSIX::SigSet->new(SIGINT);
   POSIX::sigprocmask(SIG_BLOCK, $sigset)
     or die "Can't block SIGINT for fork: [$!]\n";
-  
+
   ### fork off a child
   my $pid = fork;
   unless( defined $pid ){
@@ -269,10 +267,9 @@ sub daemonize ($$$) {
 
   check_pid_file( $pid_file );
 
-
   my $uid = get_uid( $user );
   my $gid = get_gid( $group ); # returns list of groups
-  $gid = (split(/\ /,$gid))[0];
+  $gid = (split /\s+/, $gid)[0];
 
 
   my $pid = safe_fork();
@@ -288,7 +285,7 @@ sub daemonize ($$$) {
   }else{
 
     create_pid_file( $pid_file );
-  
+
     ### make sure we can remove the file later
     chown($uid,$gid,$pid_file);
 
@@ -317,11 +314,11 @@ sub daemonize ($$$) {
 }
 
 ### SIGINT routine that will remove the pid_file
-sub HUNTSMAN {                      
-  my ($path) = @_;
-  unlink ($path);
+sub HUNTSMAN {
+  my $path = shift;
+  unlink $path;
 
-  require "Unix/Syslog.pm";
+  require Unix::Syslog;
   Unix::Syslog::syslog(Unix::Syslog::LOG_ERR(), "Exiting on INT signal.");
 
   exit;
@@ -342,7 +339,7 @@ Net::Server::Daemonize - bdpf Safe fork and daemonization utilities
 
   daemonize(
     'nobody',                 # User
-    'nobody',                 # Group 
+    'nobody',                 # Group
     '/var/state/mydaemon.pid' # Path to PID file
   );
 
@@ -434,22 +431,15 @@ Jeremy Howard <j+daemonize@howard.fm>
 
 Program flow, concepts and initial work.
 
-Paul Seamons <perl@seamons.com>
+Paul Seamons <paul@seamons.com>
 
 Code rework and componentization.
 Ongoing maintainer.
 
 =head1 LICENSE
 
-  Copyright (C) 2001, Jeremy Howard
-                      j+daemonize@howard.fm
-
-                      Paul T Seamons
-                      perl@seamons.com
-                      http://seamons.com/
-  
   This package may be distributed under the terms of either the
-  GNU General Public License 
+  GNU General Public License
     or the
   Perl Artistic License
 

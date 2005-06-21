@@ -2,11 +2,13 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #
-#  $Id: SSL.pm,v 1.6 2003/04/12 18:35:25 hookbot Exp $
+#  $Id: SSL.pm,v 1.8 2005/06/20 18:55:25 rhandom Exp $
 #
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
+#  Copyright (C) 2001-2005
+#
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -203,7 +205,7 @@ See L<Net::Server::Proto>.
 =head1 DESCRIPTION
 
 Experimental.  If anybody has any successes or ideas for
-improvment under SSL, please email <perl.ssl@seamons.com>.
+improvment under SSL, please email <paul@seamons.com>.
 This is extremely alpha.
 
 Protocol module for Net::Server.  This module implements a

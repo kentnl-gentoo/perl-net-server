@@ -2,13 +2,15 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.10 2004/02/15 05:57:11 hookbot Exp $
+#  $Id: Fork.pm,v 1.15 2005/06/21 20:58:32 rhandom Exp $
 #
-#  Copyright (C) 2001, Paul T Seamons
-#                      paul@seamons.com
-#                      http://seamons.com/
+#  Copyright (C) 2001-2005
 #
-#  Copyright (C) 2003-2004, Rob Brown bbb@cpan.org
+#    Paul Seamons
+#    paul@seamons.com
+#    http://seamons.com/
+#
+#    Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -184,8 +186,8 @@ sub accept {
   my $self = shift;
   my $prop = $self->{server};
 
-  ### block on trying to get a handle, timeout on 10 seconds
-  my(@socks) = $prop->{select}->can_read(10);
+  ### block on trying to get a handle (select created because we specified multi_port)
+  my (@socks) = $prop->{select}->can_read(2);
 
   ### see if any sigs occured
   if( &check_sigs() ){
@@ -224,8 +226,11 @@ sub run_client_connection {
   $_ = undef foreach @{ $self->{server}->{sock} };
 
   ### restore sigs (for the child)
-  $SIG{HUP} = $SIG{CHLD} = $SIG{PIPE}
+  $SIG{HUP} = $SIG{CHLD}
      = $SIG{INT} = $SIG{TERM} = $SIG{QUIT} = 'DEFAULT';
+  $SIG{PIPE} = 'IGNORE';
+
+  delete $self->{server}->{children};
 
   $self->SUPER::run_client_connection;
 
@@ -338,9 +343,9 @@ See L<Net::Server>
 
 =head1 AUTHOR
 
-Paul T. Seamons paul@seamons.com
+Paul Seamons <paul@seamons.com>
 
-and maintained by Rob Brown bbb@cpan.org
+Rob Brown <bbb@cpan.org>
 
 =head1 SEE ALSO
 
