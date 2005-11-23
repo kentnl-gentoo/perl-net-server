@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #
-#  $Id: PreFork.pm,v 1.24 2005/06/21 20:54:56 rhandom Exp $
+#  $Id: PreFork.pm,v 1.26 2005/11/15 05:48:04 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -505,6 +505,10 @@ connections.  This type is good for a heavily hit site, and
 should scale well for most applications.  (Multi port accept
 is accomplished using flock to serialize the children).
 
+At this time, it does not appear that this module will pass tests on
+Win32 systems.  Any ideas or patches for making the tests pass would be
+welcome.
+
 =head1 SAMPLE CODE
 
 Please see the sample listed in Net::Server.
@@ -660,6 +664,10 @@ has written to $self->{server}->{parent_sock}.  The first argument
 will be the open socket to the child.
 
 =back
+
+=BUGS
+
+Tests don't seem to work on Win32.  Any ideas or patches would be welcome.
 
 =head1 TO DO
 

@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #
-#  $Id: PreForkSimple.pm,v 1.17 2005/06/21 20:35:30 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.20 2005/11/15 05:48:04 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -85,7 +85,7 @@ sub post_bind {
   ### clean up method to use for serialization
   if( ! defined($prop->{serialize})
       || $prop->{serialize} !~ /^(flock|semaphore|pipe)$/i ){
-    $prop->{serialize} = 'flock';
+    $prop->{serialize} = ($^O eq 'MSWin32') ? 'pipe' : 'flock';
   }
   $prop->{serialize} =~ tr/A-Z/a-z/;
 
@@ -102,8 +102,8 @@ sub post_bind {
   ### set up semaphore
   }elsif( $prop->{serialize} eq 'semaphore' ){
     $self->log(3,"Setting up serialization via semaphore");
-    require "IPC/SysV.pm";
-    require "IPC/Semaphore.pm";
+    require IPC::SysV;
+    require IPC::Semaphore;
     my $s = IPC::Semaphore->new(IPC::SysV::IPC_PRIVATE(),
                                 1,
                                 IPC::SysV::S_IRWXU() | IPC::SysV::IPC_CREAT(),
@@ -422,6 +422,10 @@ keep C<max_servers> processes dedicated to the serving.
 (Multi port accept defaults to using flock to serialize the
 children).
 
+At this time, it does not appear that this module will pass tests on
+Win32 systems.  Any ideas or patches for making the tests pass would be
+welcome.
+
 =head1 SAMPLE CODE
 
 Please see the sample listed in Net::Server.
@@ -589,6 +593,10 @@ This hook only gets called in conjuction with the
 check_for_dequeue setting.
 
 =back
+
+=BUGS
+
+Tests don't seem to work on Win32.  Any ideas or patches would be welcome.
 
 =head1 TO DO
 

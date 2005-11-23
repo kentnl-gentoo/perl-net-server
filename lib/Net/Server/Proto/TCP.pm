@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #
-#  $Id: TCP.pm,v 1.10 2005/06/20 18:53:23 rhandom Exp $
+#  $Id: TCP.pm,v 1.11 2005/11/23 03:13:50 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -83,7 +83,7 @@ sub connect {
   $args{LocalAddr} = $host if $host !~ /\*/; # what local address (* is all)
   $args{Listen}    = $prop->{listen};        # how many connections for kernel to queue
   $args{Reuse}     = 1;  # allow us to rebind the port on a restart
-  
+
   ### connect to the sock
   $sock->SUPER::configure(\%args)
     or $server->fatal("Can't connect to TCP port $port on $host [$!]");
@@ -175,7 +175,7 @@ __END__
 
 =head1 NAME
 
-  Net::Server::Proto::TCP - adp0 - Net::Server TCP protocol.
+  Net::Server::Proto::TCP - Net::Server TCP protocol.
 
 =head1 SYNOPSIS
 

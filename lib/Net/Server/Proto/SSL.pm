@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #
-#  $Id: SSL.pm,v 1.8 2005/06/20 18:55:25 rhandom Exp $
+#  $Id: SSL.pm,v 1.10 2005/11/23 03:39:26 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -62,6 +62,7 @@ sub object {
     SSL_ca_path     => \$prop->{SSL_ca_path},
     SSL_ca_file     => \$prop->{SSL_ca_file},
     SSL_cipher_list => \$prop->{SSL_cipher_list},
+    SSL_passwd_cb   => \$prop->{SSL_passwd_cb},
   });
 
   ### create the handle under this package
@@ -196,7 +197,7 @@ sub AUTOLOAD {
 
 =head1 NAME
 
-  Net::Server::Proto::SSL - adp0 - Net::Server SSL protocol.
+  Net::Server::Proto::SSL - Net::Server SSL protocol.
 
 =head1 SYNOPSIS
 
@@ -206,7 +207,6 @@ See L<Net::Server::Proto>.
 
 Experimental.  If anybody has any successes or ideas for
 improvment under SSL, please email <paul@seamons.com>.
-This is extremely alpha.
 
 Protocol module for Net::Server.  This module implements a
 secure socket layer over tcp (also known as SSL).
@@ -231,6 +231,16 @@ subroutine as the first argument).
 In addition to the normal Net::Server parameters, any of the
 SSL parameters from IO::Socket::SSL may also be specified.
 See L<IO::Socket::SSL> for information on setting this up.
+
+=head1 BUGS
+
+Christopher A Bongaarts pointed out that if the SSL negotiation is slow then
+the server won't be accepting for that period of time (because the locking
+of accept is around both the socket accept and the SSL negotiation).  This
+means that as it stands now the SSL implementation is susceptible to DOS attacks.
+To fix this will require deviding up the accept call a little bit more finely
+which may not yet be possible with IO::Socket::SSL.  Any ideas or patches on this
+bug are welcome.
 
 =head1 LICENCE
 

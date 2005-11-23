@@ -1,8 +1,8 @@
 # -*- perl -*-
 #
-#  Net::Server::Daemonize - bdpf - Daemonization utilities.
+#  Net::Server::Daemonize - Daemonization utilities.
 #
-#  $Id: Daemonize.pm,v 1.11 2005/06/20 19:41:15 rhandom Exp $
+#  $Id: Daemonize.pm,v 1.14 2005/11/23 08:09:13 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -25,13 +25,11 @@
 package Net::Server::Daemonize;
 
 use strict;
-use vars qw( @ISA @EXPORT_OK $VERSION );
-use Exporter ();
+use vars qw( @EXPORT_OK $VERSION );
+use base qw(Exporter);
 use POSIX qw(SIGINT SIG_BLOCK SIG_UNBLOCK);
 
 $VERSION = "0.05";
-
-@ISA = qw(Exporter);
 
 @EXPORT_OK = qw(check_pid_file
                 create_pid_file
@@ -65,16 +63,9 @@ sub check_pid_file ($) {
 
   my $exists = undef;
 
-
   ### try a proc file system
-  if( -d '/proc' && opendir(_DH,'/proc') ){
-
-    while ( defined(my $pid = readdir(_DH)) ){
-      if( $pid eq $current_pid ){
-        $exists = 1;
-        last;
-      }
-    }
+  if( -d '/proc' && -e "/proc/$current_pid" ){
+    $exists = 1;
 
   ### try ps
   #}elsif( -x '/bin/ps' ){ # not as portable
@@ -202,7 +193,10 @@ sub set_uid {
 
   POSIX::setuid($uid);
   if ($< != $uid) {
-    die "Couldn't become uid \"$uid\": $!\n";
+    $< = $> = $uid; # try again - needed by some 5.8.0 linux systems (rt #13450)
+    if ($< != $uid) {
+      die "Couldn't become uid \"$uid\": $!\n";
+    }
   }
 
   return 1;
@@ -216,8 +210,7 @@ sub set_gid {
   eval { $) = $gids }; # store all the gids - this is really sort of optional
 
   POSIX::setgid($gid);
-  my $_gid = (split /\s+/, $()[0];
-  if ($_gid != $gid) {
+  if (! grep {$gid == $_} split /\s+/, $() { # look for any valid id in the list
     die "Couldn't become gid \"$gid\": $!\n";
   }
 
@@ -265,7 +258,7 @@ sub safe_fork () {
 sub daemonize ($$$) {
   my ($user, $group, $pid_file) = @_;
 
-  check_pid_file( $pid_file );
+  check_pid_file($pid_file) if defined $pid_file;
 
   my $uid = get_uid( $user );
   my $gid = get_gid( $group ); # returns list of groups
@@ -284,10 +277,10 @@ sub daemonize ($$$) {
   ### child process will continue on
   }else{
 
-    create_pid_file( $pid_file );
+    create_pid_file($pid_file) if defined $pid_file;
 
     ### make sure we can remove the file later
-    chown($uid,$gid,$pid_file);
+    chown($uid, $gid, $pid_file) if defined $pid_file;
 
     ### become another user and group
     set_user($uid, $gid);
@@ -307,7 +300,7 @@ sub daemonize ($$$) {
 
     ### install a signal handler to make sure
     ### SIGINT's remove our pid_file
-    $SIG{INT}  = sub { HUNTSMAN( $pid_file ); };
+    $SIG{INT}  = sub { HUNTSMAN($pid_file) } if defined $pid_file;
     return 1;
 
   }
@@ -318,8 +311,10 @@ sub HUNTSMAN {
   my $path = shift;
   unlink $path;
 
-  require Unix::Syslog;
-  Unix::Syslog::syslog(Unix::Syslog::LOG_ERR(), "Exiting on INT signal.");
+  eval {
+      require Unix::Syslog;
+      Unix::Syslog::syslog(Unix::Syslog::LOG_ERR(), "Exiting on INT signal.");
+  };
 
   exit;
 }
@@ -331,7 +326,7 @@ __END__
 
 =head1 NAME
 
-Net::Server::Daemonize - bdpf Safe fork and daemonization utilities
+Net::Server::Daemonize - Safe fork and daemonization utilities
 
 =head1 SYNOPSIS
 
@@ -340,7 +335,7 @@ Net::Server::Daemonize - bdpf Safe fork and daemonization utilities
   daemonize(
     'nobody',                 # User
     'nobody',                 # Group
-    '/var/state/mydaemon.pid' # Path to PID file
+    '/var/state/mydaemon.pid' # Path to PID file - optional
   );
 
 =head1 DESCRIPTION
@@ -363,7 +358,7 @@ pid file (storing the pid in the file), become another user and
 group, close STDIN, STDOUT and STDERR, separate from the process
 group (become session leader), and install $SIG{INT} to remove
 the pid file.  In otherwords - daemonize.  All errors result in
-a die.
+a die.  As of version 0.89 the pid_file is optional.
 
 =item safe_fork
 

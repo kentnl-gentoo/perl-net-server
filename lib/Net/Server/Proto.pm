@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto - Net::Server Protocol compatibility layer
 #
-#  $Id: Proto.pm,v 1.6 2005/06/20 18:51:24 rhandom Exp $
+#  $Id: Proto.pm,v 1.7 2005/11/23 03:14:37 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -79,7 +79,7 @@ __END__
 
 =head1 NAME
 
-  Net::Server::Proto - adp0 - Net::Server Protocol compatibility layer
+  Net::Server::Proto - Net::Server Protocol compatibility layer
 
 =head1 SYNOPSIS
 

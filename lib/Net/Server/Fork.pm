@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.15 2005/06/21 20:58:32 rhandom Exp $
+#  $Id: Fork.pm,v 1.17 2005/11/15 05:26:44 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -23,18 +23,14 @@
 
 package Net::Server::Fork;
 
+use base qw(Net::Server);
 use strict;
-use vars qw($VERSION @ISA);
-use Net::Server ();
+use vars qw($VERSION);
 use Net::Server::SIG qw(register_sig check_sigs);
 use Socket qw(SO_TYPE SOL_SOCKET SOCK_DGRAM);
 use POSIX qw(WNOHANG);
 
 $VERSION = $Net::Server::VERSION; # done until separated
-
-### fall back to parent methods
-@ISA = qw(Net::Server);
-
 
 ### override-able options for this package
 sub options {
@@ -147,6 +143,7 @@ sub loop {
     ### accept will check signals as appropriate
     if( ! $self->accept() ){
       last if $prop->{_HUP};
+      last if $prop->{done};
       next;
     }
 
@@ -270,6 +267,9 @@ This personality binds to one or more ports and then waits
 for a client connection.  When a connection is received,
 the server forks a child.  The child handles the request
 and then closes.
+
+With the exception of parent/child signaling, this module
+will work (with basic functionality) on Win32 systems.
 
 =head1 ARGUMENTS
 

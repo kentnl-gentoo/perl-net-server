@@ -15,9 +15,6 @@ SYNOPSIS
       MyPackage->run(port => 160);
       exit;
 
-OBTAINING
-    Visit http://seamons.com/ for the latest version.
-
 FEATURES
      * Single Server Mode
      * Inetd Server Mode
@@ -257,6 +254,10 @@ ARGUMENTS
       3) Arguments passed to the run method.
       4) Arguments passed via a conf file.
       5) Arguments set in the configure_hook.
+
+    Each of these levels will override parameters of the same name specified
+    in subsequent levels. For example, specifying --setsid=0 on the command
+    line will override a value of "setsid 1" in the conf file.
 
     Key/value pairs used by the server are removed by the configuration
     process so that server layers on top of "Net::Server" can pass and read
@@ -747,6 +748,19 @@ THANKS
     Thanks to Vadim <vadim at hardison.net> for patches to implement
     parent/child communication on PreFork.pm.
 
+    Thanks to Carl Lewis for suggesting "-" in user names.
+
+    Thanks to Slaven Rezic for suggesing Reuse => 1 in Proto::UDP.
+
+    Thanks to Tim Watt for adding udp_broadcast to Proto::UDP.
+
+    Thanks to Christopher A Bongaarts for pointing out problems with the
+    Proto::SSL implementation that currently locks around the socket accept
+    and the SSL negotiation. See Net::Server::Proto::SSL.
+
+    Thanks to Alessandro Zummo for pointing out various bugs including some
+    in configuration, commandline args, and cidr_allow.
+
     Thanks to various other people for bug fixes over the years. These and
     future thank-you's are available in the Changes file as well as CVS
     comments.
@@ -758,6 +772,7 @@ SEE ALSO
 
 AUTHOR
       Paul Seamons <paul@seamons.com>
+      http://seamons.com/
 
       Rob Brown <bbb@cpan.org>
 

@@ -1,8 +1,8 @@
 # -*- perl -*-
 #
-#  Net::Server - bdpO - Extensible Perl internet server
+#  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.65 2005/06/21 21:16:03 rhandom Exp $
+#  $Id: Server.pm,v 1.77 2005/11/23 08:22:20 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -36,7 +36,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.88';
+$VERSION = '0.89';
 
 ### program flow
 sub run {
@@ -48,10 +48,8 @@ sub run {
   $self->{server} = {} unless defined($self->{server}) && ref($self->{server});
 
   ### save for a HUP
-  my $script = $0;
-  $script = $ENV{'PWD'} .'/'. $0 if $ENV{'PWD'};
-  $self->{server}->{commandline} = [ $script, @ARGV ]
-    unless defined $self->{server}->{commandline};
+  $self->{server}->{commandline} = $self->get_commandline
+      if ! defined $self->{server}->{commandline};
 
   ### prepare to cache configuration parameters
   $self->{server}->{conf_file_args} = undef;
@@ -128,6 +126,24 @@ sub run_client_connection {
 
 
 ###----------------------------------------------------------###
+
+sub get_commandline {
+  my $self = shift;
+  my $prop = $self->{server};
+
+  ### see if we can find the full command line
+  if (open _CMDLINE, "/proc/$$/cmdline") { # unix specific
+    my $line = do { local $/ = undef; <_CMDLINE> };
+    close _CMDLINE;
+    if ($line) {
+      return [split /\0/, $line];
+    }
+  }
+
+  my $script = $0;
+  $script = $ENV{'PWD'} .'/'. $script if $script =~ m|^\.+/| && $ENV{'PWD'}; # add absolute to relative
+  return [ $script, @ARGV ]
+}
 
 ### any pre-initialization stuff
 sub configure_hook {}
@@ -229,35 +245,40 @@ sub post_configure {
   ### see if a daemon is already running
   if( defined $prop->{pid_file} ){
     if( ! eval{ check_pid_file( $prop->{pid_file} ) } ){
+      if (! $ENV{BOUND_SOCKETS}) {
+        warn $@;
+      }
       $self->fatal( $@ );
     }
   }
 
   ### completetly daemonize by closing STDIN, STDOUT (should be done before fork)
   if( ! $prop->{_is_inet} ){
-    if( defined($prop->{setsid}) || length($prop->{log_file}) ){
+    if( $prop->{setsid} || length($prop->{log_file}) ){
       open STDIN,  '</dev/null' || die "Can't read /dev/null  [$!]";
       open STDOUT, '>/dev/null' || die "Can't write /dev/null [$!]";
     }
   }
 
-  ### background the process
-  if( defined($prop->{setsid}) || defined($prop->{background}) ){
-    my $pid = eval{ safe_fork() };
-    if( not defined $pid ){ $self->fatal( $@ ); }
-    exit(0) if $pid;
-    $self->log(2,"Process Backgrounded");
-  }
+  if (! $ENV{BOUND_SOCKETS}) {
+    ### background the process - unless we are hup'ing
+    if( $prop->{setsid} || defined($prop->{background}) ){
+      my $pid = eval{ safe_fork() };
+      if( not defined $pid ){ $self->fatal( $@ ); }
+      exit(0) if $pid;
+      $self->log(2,"Process Backgrounded");
+    }
 
-  ### completely remove myself from parent process
-  if( defined($prop->{setsid}) ){
-    &POSIX::setsid();
+    ### completely remove myself from parent process - unless we are hup'ing
+    if( $prop->{setsid} ){
+      &POSIX::setsid();
+    }
   }
 
   ### completetly daemonize by closing STDERR (should be done after fork)
   if( length($prop->{log_file}) ){
     open STDERR, '>&_SERVER_LOG' || die "Can't open STDERR to _SERVER_LOG [$!]";
-  }elsif( defined($prop->{setsid}) ){
+  }elsif( $prop->{setsid} ){
     open STDERR, '>&STDOUT' || die "Can't open STDERR to STDOUT [$!]";
   }
 
@@ -294,7 +315,7 @@ sub pre_bind {
   no strict 'refs';
   my $super = ${"${ref}::ISA"}[0];
   use strict 'refs';
-  my $ns_type = $ref eq $super ? '' : " (type $super)";
+  my $ns_type = (! $super || $ref eq $super) ? '' : " (type $super)";
   $self->log(2,$self->log_time ." ". ref($self) .$ns_type. " starting! pid($$)");
 
   ### set a default port, host, and proto
@@ -317,7 +338,12 @@ sub pre_bind {
   ### set up parallel arrays of hosts, ports, and protos
   ### port can be any of many types (tcp,udp,unix, etc)
   ### see perldoc Net::Server::Proto for more information
+  my %bound;
   foreach my $port ( @{ $prop->{port} } ){
+    if ($bound{"$prop->{host}/$port/$prop->{proto}"} ++) {
+      $self->log(2, "Duplicate configuration (".uc($prop->{proto})." port $port on host ".$prop->{host}.") - skipping");
+      next;
+    }
     my $obj = $self->proto_object($prop->{host},
                                   $port,
                                   $prop->{proto},
@@ -423,7 +449,7 @@ sub post_bind {
     $self->log(1,"User Not Defined.  Defaulting to EUID '$>'\n");
     $prop->{user}  = $>;
   }else{
-    if( $prop->{user} =~ /^(\w+)$/ ){
+    if( $prop->{user} =~ /^([\w-]+)$/ ){
       $prop->{user} = eval{ get_uid( $1 ) };
       $self->fatal( $@ ) if $@;
     }else{
@@ -547,11 +573,12 @@ sub accept {
     ### with more than one port, use select to get the next one
     if( defined $prop->{multi_port} ){
 
+      return 0 if defined $prop->{_HUP};
+
       ### anything server type specific
       $sock = $self->accept_multi_port;
       next unless $sock; # keep trying for the rest of retries
 
-      ### last one if HUPed
       return 0 if defined $prop->{_HUP};
 
     ### single port is bound - just accept
@@ -746,7 +773,7 @@ sub allow_deny {
   }
   if ($#{ $prop->{cidr_allow} } != -1) {
     require Net::CIDR;
-    return 0 if Net::CIDR::cidrlookup($prop->{peeraddr}, @{ $prop->{cidr_allow} });
+    return 1 if Net::CIDR::cidrlookup($prop->{peeraddr}, @{ $prop->{cidr_allow} });
   }
 
   return 0;
@@ -783,7 +810,7 @@ sub process_request {
 
 
   ### handle tcp connections (tcp echo server)
-  print "Welcome to \"".ref($self)."\" ($$)\n";
+  print "Welcome to \"".ref($self)."\" ($$)\r\n";
 
   ### eval block needed to prevent DoS by using timeout
   my $timeout = 30; # give the user 30 seconds to type a line
@@ -819,7 +846,7 @@ sub process_request {
   alarm($previous_alarm);
 
 
-  if( $@=~/timed out/i ){
+  if ($@ eq "Timed Out!\n") {
     print STDOUT "Timed Out.\r\n";
     return;
   }
@@ -883,30 +910,29 @@ sub dequeue {}
 ### user customizable hook
 sub pre_server_close_hook {}
 
-
 ### this happens when the server reaches the end
 sub server_close{
   my $self = shift;
   my $prop = $self->{server};
 
-  ### allow for customizable closing
-  $self->pre_server_close_hook();
-
   $SIG{INT} = 'DEFAULT';
-
-  $self->log(2,$self->log_time . " Server closing!");
 
   ### if this is a child process, signal the parent and close
   ### normally the child shouldn't, but if they do...
   ### otherwise the parent continues with the shutdown
   ### this is safe for non standard forked child processes
   ### as they will not have server_close as a handler
-  if( defined($prop->{ppid}) && $prop->{ppid} != $$ ){
-    if( ! defined $prop->{no_close_by_child} ){
-      kill(2,$prop->{ppid});
-      exit;
-    }
+  if (defined $prop->{ppid}
+      && $prop->{ppid} != $$
+      && ! defined $prop->{no_close_by_child}) {
+    $self->close_parent;
+    exit;
   }
+
+  ### allow for customizable closing
+  $self->pre_server_close_hook;
+
+  $self->log(2,$self->log_time . " Server closing!");
 
   ### shut down children if any
   if( defined $prop->{children} ){
@@ -939,6 +965,14 @@ sub server_close{
   exit;
 }
 
+### Allow children to send INT signal to parent (or use another method)
+### This method is only used by forking servers
+sub close_parent {
+  my $self = shift;
+  my $prop = $self->{server};
+  die "Missing parent pid (ppid)" if ! $prop->{ppid};
+  kill 2, $prop->{ppid};
+}
 
 ### SIG INT the children
 ### This method is only used by forking servers (ie Fork, PreFork)
@@ -1061,7 +1095,7 @@ sub log {
   return unless $level <= $prop->{log_level};
 
   ### log only to syslog if setup to do syslog
-  if( $prop->{log_file} eq 'Sys::Syslog' ){
+  if( defined($prop->{log_file}) && $prop->{log_file} eq 'Sys::Syslog' ){
     $level = $level!~/^\d+$/ ? $level : $Net::Server::syslog_map->{$level} ;
     Sys::Syslog::syslog($level, '%s', $msg);
     return;
@@ -1081,7 +1115,7 @@ sub write_to_log_hook {
 
   if( $prop->{log_file} ){
     print _SERVER_LOG $msg, "\n";
-  }elsif( defined($prop->{setsid}) ){
+  }elsif( $prop->{setsid} ){
     # do nothing
   }else{
     my $old = select(STDERR);
@@ -1144,6 +1178,10 @@ sub process_args {
     $self->options( $template );
   }
 
+  ### we want subsequent calls to not overwrite or add to
+  ### previously set values so that command line arguments win
+  my %previously_set;
+
   foreach (my $i=0 ; $i < @$ref ; $i++ ){
 
     if( $ref->[$i] =~ /^(?:--)?(\w+)([=\ ](\S+))?$/
@@ -1151,17 +1189,28 @@ sub process_args {
       my ($key,$val) = ($1,$3);
       splice( @$ref, $i, 1 );
       if( not defined($val) ){
-        die ("Odd number of args passed to process_args. Fatal.\n")
-          if $i > $#$ref;
-        $val = splice( @$ref, $i, 1 );
+        if ($i > $#$ref
+            || ($ref->[$i] && $ref->[$i] =~ /^--\w+/)) {
+          $val = 1; # allow for options such as --setsid
+        } else {
+          $val = splice( @$ref, $i, 1 );
+        }
       }
       $i--;
       $val =~ s/%([A-F0-9])/chr(hex($1))/eig;
 
       if( ref $template->{$key} eq 'ARRAY' ){
+        if (! defined $previously_set{$key}) {
+          $previously_set{$key} = scalar @{ $template->{$key} };
+        }
+        next if $previously_set{$key};
         push( @{ $template->{$key} }, $val );
       }else{
-        $ { $template->{$key} } = $val;
+        if (! defined $previously_set{$key}) {
+          $previously_set{$key} = defined(${ $template->{$key} }) ? 1 : 0;
+        }
+        next if $previously_set{$key};
+        ${ $template->{$key} } = $val;
       }
     }
 
@@ -1184,11 +1233,14 @@ sub process_conf {
       ? $1 : $self->fatal("Unsecure filename \"$file\"");
 
     if( not open(_CONF,"<$file") ){
+      if (! $ENV{BOUND_SOCKETS}) {
+        warn "Couldn't open conf \"$file\" [$!]\n";
+      }
       $self->fatal("Couldn't open conf \"$file\" [$!]");
     }
 
     while(<_CONF>){
-      push( @args, "$1=$2") if m/^\s*((?:--)?\w+)[=:]?\s*(\S+)/;
+      push( @args, "$1=$2") if m/^\s*((?:--)?\w+)(?:\s*[=:]\s*|\s+)(\S+)/;
     }
 
     close(_CONF);
@@ -1258,10 +1310,6 @@ Net::Server - Extensible, general Perl server engine
 
   MyPackage->run(port => 160);
   exit;
-
-=head1 OBTAINING
-
-Visit http://seamons.com/ for the latest version.
 
 =head1 FEATURES
 
@@ -1542,6 +1590,11 @@ will look for arguments in the following order:
   3) Arguments passed to the run method.
   4) Arguments passed via a conf file.
   5) Arguments set in the configure_hook.
+
+Each of these levels will override parameters of the same
+name specified in subsequent levels.  For example, specifying
+--setsid=0 on the command line will override a value of "setsid 1"
+in the conf file.
 
 Key/value pairs used by the server are removed by the
 configuration process so that server layers on top of
@@ -2126,6 +2179,19 @@ numerous suggestions and for work on Net::Server::Daemonize.
 Thanks to Vadim <vadim at hardison.net> for patches to
 implement parent/child communication on PreFork.pm.
 
+Thanks to Carl Lewis for suggesting "-" in user names.
+
+Thanks to Slaven Rezic for suggesing Reuse => 1 in Proto::UDP.
+
+Thanks to Tim Watt for adding udp_broadcast to Proto::UDP.
+
+Thanks to Christopher A Bongaarts for pointing out problems with
+the Proto::SSL implementation that currently locks around the socket
+accept and the SSL negotiation. See L<Net::Server::Proto::SSL>.
+
+Thanks to Alessandro Zummo for pointing out various bugs including
+some in configuration, commandline args, and cidr_allow.
+
 Thanks to various other people for bug fixes over the years.
 These and future thank-you's are available in the Changes file
 as well as CVS comments.
@@ -2143,6 +2209,7 @@ L<Net::Server::Single>
 =head1 AUTHOR
 
   Paul Seamons <paul@seamons.com>
+  http://seamons.com/
 
   Rob Brown <bbb@cpan.org>
 
