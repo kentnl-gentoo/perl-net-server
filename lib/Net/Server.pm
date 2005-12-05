@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.77 2005/11/23 08:22:20 rhandom Exp $
+#  $Id: Server.pm,v 1.80 2005/12/05 21:13:04 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -36,7 +36,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.89';
+$VERSION = '0.90';
 
 ### program flow
 sub run {
@@ -48,8 +48,8 @@ sub run {
   $self->{server} = {} unless defined($self->{server}) && ref($self->{server});
 
   ### save for a HUP
-  $self->{server}->{commandline} = $self->get_commandline
-      if ! defined $self->{server}->{commandline};
+  $self->commandline($self->_get_commandline)
+      if ! eval { $self->commandline };
 
   ### prepare to cache configuration parameters
   $self->{server}->{conf_file_args} = undef;
@@ -124,10 +124,9 @@ sub run_client_connection {
 
 }
 
+###----------------------------------------------------------------###
 
-###----------------------------------------------------------###
-
-sub get_commandline {
+sub _get_commandline {
   my $self = shift;
   my $prop = $self->{server};
 
@@ -144,6 +143,17 @@ sub get_commandline {
   $script = $ENV{'PWD'} .'/'. $script if $script =~ m|^\.+/| && $ENV{'PWD'}; # add absolute to relative
   return [ $script, @ARGV ]
 }
+
+sub commandline {
+    my $self = shift;
+    if (@_) { # allow for set
+      $self->{server}->{commandline} = ref($_[0]) ? shift : \@_;
+    }
+    return $self->{server}->{commandline} || die "commandline was not set during initialization";
+}
+
+###----------------------------------------------------------------###
+
 
 ### any pre-initialization stuff
 sub configure_hook {}
@@ -376,19 +386,16 @@ sub bind {
 
     $self->restart_open_hook();
 
-    $self->log(2,"Binding open file descriptors");
+    $self->log(2, "Binding open file descriptors");
 
     ### loop through the past information and match things up
-    foreach my $info ( split(/\n/, $ENV{BOUND_SOCKETS}) ){
-      my ($fd,$hup_string) = split(/\|/,$info,2);
-      $self->fatal("Bad file descriptor")
-        unless $fd =~ /^(\d+)$/;
-      $fd = $1;
-
-      foreach ( @{ $prop->{sock} } ){
-        if( $hup_string eq $_->hup_string() ){
-          $_->log_connect($self);
-          $_->reconnect( $fd, $self );
+    foreach my $info (split /\n/, $ENV{BOUND_SOCKETS}) {
+      my ($fd, $hup_string) = split /\|/, $info, 2;
+      $fd = ($fd =~ /^(\d+)$/) ? $1 : $self->fatal("Bad file descriptor");
+      foreach my $sock ( @{ $prop->{sock} } ){
+        if ($hup_string eq $sock->hup_string) {
+          $sock->log_connect($self);
+          $sock->reconnect($fd, $self);
           last;
         }
       }
@@ -463,7 +470,7 @@ sub post_bind {
     my @chown_files = ();
     foreach my $sock ( @{ $prop->{sock} } ){
       push @chown_files, $sock->NS_unix_path
-        if$sock->NS_proto eq 'UNIX';
+        if $sock->NS_proto eq 'UNIX';
     }
     if( $prop->{pid_file_unlink} ){
       push @chown_files, $prop->{pid_file};
@@ -581,6 +588,11 @@ sub accept {
 
       return 0 if defined $prop->{_HUP};
 
+      if ($self->can_read_hook($sock)) {
+        $retries ++;
+        next;
+      }
+
     ### single port is bound - just accept
     }else{
 
@@ -647,6 +659,12 @@ sub accept_multi_port {
   return $waiting[ rand(@waiting) ];
 
 }
+
+### this occurs after a socket becomes readible on an accept_multi_port call.
+### It is passed $self and the $sock that is readible.  A return value
+### of true indicates to not pass the handle on to the process_request method and
+### to return to accepting
+sub can_read_hook {}
 
 
 ### this occurs after the request has been processed
@@ -959,7 +977,13 @@ sub server_close{
 
     $self->restart_close_hook();
 
-    $self->hup_server;
+    $self->hup_server; # execs at the end
+  }
+
+  ### unlink remaining socket files (if any)
+  foreach my $sock ( @{ $prop->{sock} } ){
+    unlink $sock->NS_unix_path
+      if $sock->NS_proto eq 'UNIX';
   }
 
   exit;
@@ -1013,12 +1037,12 @@ sub sig_hup {
   foreach my $sock ( @{ $prop->{sock} } ){
 
     ### duplicate the sock
-    my $fd = POSIX::dup($sock->fileno())
+    my $fd = POSIX::dup($sock->fileno)
       or $self->fatal("Can't dup socket [$!]");
 
     ### hold on to the socket copy until exec
-    $prop->{_HUP}->[$i] = IO::Socket::INET->new();
-    $prop->{_HUP}->[$i]->fdopen( $fd, 'w' )
+    $prop->{_HUP}->[$i] = IO::Socket::INET->new;
+    $prop->{_HUP}->[$i]->fdopen($fd, 'w')
       or $self->fatal("Can't open to file descriptor [$!]");
 
     ### turn off the FD_CLOEXEC bit to allow reuse on exec
@@ -1038,7 +1062,7 @@ sub sig_hup {
     delete $prop->{select};
   }
 
-  $ENV{BOUND_SOCKETS} = join("\n",@fd);
+  $ENV{BOUND_SOCKETS} = join("\n", @fd);
 }
 
 ### restart the server using prebound sockets
@@ -1047,8 +1071,12 @@ sub hup_server {
 
   $self->log(0,$self->log_time()." HUP'ing server");
 
-  exec @{ $self->{server}->{commandline} };
+  delete $ENV{$_} for $self->hup_delete_env_keys;
+
+  exec @{ $self->commandline };
 }
+
+sub hup_delete_env_keys { return qw(PATH) }
 
 ### this hook occurs if a server has been HUP'ed
 ### it occurs just before opening to the fileno's
@@ -2010,6 +2038,23 @@ This hook occurs after chroot, change of user, and change of
 group has occured.  It allows for preparation before looping
 begins.
 
+=item C<$self-E<gt>can_read_hook()>
+
+This hook occurs after a socket becomes readible on an accept_multi_port
+request (accept_multi_port is used if there are multiple bound ports
+to accept on, or if the "multi_port" configuration parameter is set to
+true).  This hook is intended to allow for processing of arbitrary handles
+added to the IO::Select used for the accept_multi_port.  These
+handles could be added during the post_bind_hook.  No internal support
+is added for processing these handles or adding them to the IO::Socket.  Care
+must be used in how much occurs during the can_read_hook as a long response
+time will result in the server being susceptible to DOS attacks.  A return value
+of true indicates that the Server should not pass the readible handle on to the
+post_accept and process_request phases.
+
+It is generally suggested that other avenues be pursued for sending messages
+via sockets not created by the Net::Server.
+
 =item C<$self-E<gt>post_accept_hook()>
 
 This hook occurs after a client has connected to the server.
@@ -2085,32 +2130,32 @@ is received, the server will close children (if any), make
 sure that sockets are left open, and re-exec using
 the same commandline parameters that initially started the
 server.  (Note: for this reason it is important that @ARGV
-is not modified until C<-E<gt>run> is called.
+is not modified until C<-E<gt>run> is called).
 
-=head1 TO DO
+The Net::Server will attempt to find out the commandline used for
+starting the program.  The attempt is made before any configuration
+files or other arguments are processed.  The outcome of this attempt
+is stored using the method C<-E<gt>commandline>.  The stored
+commandline may also be retrieved using the same method name.  The
+stored contents will undoubtedly contain Tainted items that will cause
+the server to die during a restart when using the -T flag (Taint
+mode).  As it is impossible to arbitrarily decide what is taint safe
+and what is not, the individual program must clean up the tainted
+items before doing a restart.
 
-There are several tasks to perform before the alpha label
-can be removed from this software:
+  sub configure_hook{
+    my $self = shift;
 
-=over 4
+    ### see the contents
+    my $ref  = $self->commandline;
+    use Data::Dumper;
+    print Dumper $ref;
 
-=item Use It
+    ### arbitrary untainting - VERY dangerous
+    my @untainted = map {/(.+)/;$1} @$ref;
 
-The best way to further the status of this project is to use
-it.  There are immediate plans to use this as a base class
-in implementing some mail servers and banner servers on a
-high hit site.
-
-=item Other Personalities
-
-Explore any other personalities
-
-=item Net::Server::HTTP, etc
-
-Create various types of servers.  Possibly, port exising
-servers to user Net::Server as a base layer.
-
-=back
+    $self->commandline(\@untainted)
+  }
 
 =head1 FILES
 
@@ -2138,12 +2183,6 @@ these commands in its base directory:
   make
   make test
   make install
-
-For RPM installation, download tarball before
-running these commands in your _topdir:
-
-  rpm -ta SOURCES/Net-Server-*.tar.gz
-  rpm -ih RPMS/noarch/perl-Net-Server-*.rpm
 
 =head1 AUTHOR
 

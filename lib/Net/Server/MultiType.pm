@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #
-#  $Id: MultiType.pm,v 1.5 2005/06/20 18:48:31 rhandom Exp $
+#  $Id: MultiType.pm,v 1.6 2005/12/05 20:36:27 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -54,8 +54,8 @@ sub run {
   my $prop = $self->{server};
 
   ### save for a HUP
-  $prop->{commandline} = [ $0, @ARGV ]
-    unless defined $prop->{commandline};
+  $self->commandline($self->_get_commandline)
+      if ! eval { $self->commandline };
 
   $self->configure_hook;      # user customizable hook
 
@@ -79,7 +79,7 @@ sub run {
       my $package = "Net::Server::$_";
       my $package_file = $package .'.pm';
       $package_file =~ s{::}{/}g;
-      
+
       ### see if the package is available
       eval { require $package_file; };
 
@@ -98,7 +98,7 @@ sub run {
 
       ### success - skip any others
       last;
-      
+
     }
 
   }

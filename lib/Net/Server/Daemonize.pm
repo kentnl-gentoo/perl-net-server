@@ -2,7 +2,7 @@
 #
 #  Net::Server::Daemonize - Daemonization utilities.
 #
-#  $Id: Daemonize.pm,v 1.14 2005/11/23 08:09:13 rhandom Exp $
+#  $Id: Daemonize.pm,v 1.15 2005/12/05 19:56:37 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -56,16 +56,15 @@ sub check_pid_file ($) {
   if( ! open(_PID,$pid_file) ){
     die "Couldn't open existant pid_file \"$pid_file\" [$!]\n";
   }
-  my $current_pid = <_PID>;
+  my $_current_pid = <_PID>;
   close _PID;
-  chomp($current_pid);
-
+  my $current_pid = $_current_pid =~ /^(\d{1,10})/ ? $1 : die "Couldn't find pid in existing pid_file";
 
   my $exists = undef;
 
   ### try a proc file system
-  if( -d '/proc' && -e "/proc/$current_pid" ){
-    $exists = 1;
+  if( -d '/proc' ) {
+    $exists = -e "/proc/$current_pid";
 
   ### try ps
   #}elsif( -x '/bin/ps' ){ # not as portable
