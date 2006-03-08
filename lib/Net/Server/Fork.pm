@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.17 2005/11/15 05:26:44 rhandom Exp $
+#  $Id: Fork.pm,v 1.18 2006/03/08 16:07:33 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -236,6 +236,21 @@ sub run_client_connection {
 ### Stub function in case check_for_dequeue is used.
 sub run_dequeue {
   die "run_dequeue: virtual method not defined";
+}
+
+sub close_children {
+    my $self = shift;
+    $self->SUPER::close_children(@_);
+
+    check_sigs(); # since we have captured signals - make sure we handle them
+
+    register_sig(PIPE => 'DEFAULT',
+                 INT  => 'DEFAULT',
+                 TERM => 'DEFAULT',
+                 QUIT => 'DEFAULT',
+                 HUP  => 'DEFAULT',
+                 CHLD => 'DEFAULT',
+                 );
 }
 
 1;

@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #
-#  $Id: PreForkSimple.pm,v 1.20 2005/11/15 05:48:04 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.21 2006/03/08 16:04:39 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -385,6 +385,21 @@ sub run_parent {
 ### Stub function in case check_for_dequeue is used.
 sub run_dequeue {
   die "run_dequeue: virtual method not defined";
+}
+
+sub close_children {
+    my $self = shift;
+    $self->SUPER::close_children(@_);
+
+    check_sigs(); # since we have captured signals - make sure we handle them
+
+    register_sig(PIPE => 'DEFAULT',
+                 INT  => 'DEFAULT',
+                 TERM => 'DEFAULT',
+                 QUIT => 'DEFAULT',
+                 HUP  => 'DEFAULT',
+                 CHLD => 'DEFAULT',
+                 );
 }
 
 1;

@@ -217,9 +217,10 @@ SAMPLE CODE
     Denial of Service attacks.
 
 ARGUMENTS
-    There are four possible ways to pass arguments to Net::Server. They are
+    There are five possible ways to pass arguments to Net::Server. They are
     *passing on command line*, *using a conf file*, *passing parameters to
-    run*, or *using a pre-built object to call the run method*.
+    run*, *returning values in the default_values method*, or *using a
+    pre-built object to call the run method*.
 
     Arguments consist of key value pairs. On the commandline these pairs
     follow the POSIX fashion of "--key value" or "--key=value", and also
@@ -253,11 +254,16 @@ ARGUMENTS
       2) Arguments passed on command line.
       3) Arguments passed to the run method.
       4) Arguments passed via a conf file.
-      5) Arguments set in the configure_hook.
+      5) Arguments set in default_values method.
+      6) Arguments set in the configure_hook.
 
     Each of these levels will override parameters of the same name specified
     in subsequent levels. For example, specifying --setsid=0 on the command
     line will override a value of "setsid 1" in the conf file.
+
+    Note that the configure_hook method doesn't return values to set, but is
+    there to allow for setting up configured values before the configure
+    method is called.
 
     Key/value pairs used by the server are removed by the configuration
     process so that server layers on top of "Net::Server" can pass and read
@@ -510,7 +516,8 @@ CONFIGURATION FILE
 
 PROCESS FLOW
     The process flow is written in an open, easy to override, easy to hook,
-    fashion. The basic flow is shown below.
+    fashion. The basic flow is shown below. This is the flow of the
+    "$self->run" method.
 
       $self->configure_hook;
 
@@ -583,11 +590,140 @@ PROCESS FLOW
          $self->hup_server;
       }
 
+      $self->shutdown_sockets;
+
       exit;
+
+MAIN SERVER METHODS
+    "$self->run"
+        This method incorporates the main process flow. This flow is listed
+        above.
+
+        The method run may be called in any of the following ways.
+
+           MyPackage->run(port => 20201);
+
+           MyPackage->new({port => 20201})->run;
+
+           my $obj = bless {server=>{port => 20201}}, 'MyPackage';
+           $obj->run;
+
+        The ->run method should typically be the last method called in a
+        server start script (the server will exit at the end of the ->run
+        method).
+
+    "$self->configure"
+        This method attempts to read configurations from the commandline,
+        from the run method call, or from a specified conf_file. All of the
+        configured parameters are then stored in the {"server"} property of
+        the Server object.
+
+    "$self->post_configure"
+        The post_configure hook begins the startup of the server. During
+        this method running server instances are checked for, pid_files are
+        created, log_files are created, Sys::Syslog is initialized (as
+        needed), process backgrounding occurs and the server closes STDIN
+        and STDOUT (as needed).
+
+    "$self->pre_bind"
+        This method is used to initialize all of the socket objects used by
+        the server.
+
+    "$self->bind"
+        This method actually binds to the inialized sockets (or rebinds if
+        the server has been HUPed).
+
+    "$self->post_bind"
+        During this method priveleges are dropped. The INT, TERM, and QUIT
+        signals are set to run server_close. Sig PIPE is set to IGNORE. Sig
+        CHLD is set to sig_chld. And sig HUP is set to call sig_hup.
+
+        Under the Fork, PreFork, and PreFork simple personalities, these
+        signals are registered using Net::Server::SIG to allow for safe
+        signal handling.
+
+    "$self->loop"
+        During this phase, the server accepts incoming connections. The
+        behavior of how the accepting occurs and if a child process handles
+        the connection is controlled by what type of Net::Server personality
+        the server is using.
+
+        Net::Server and Net::Server single accept only one connection at a
+        time.
+
+        Net::Server::INET runs one connection and then exits (for use by
+        inetd or xinetd daemons).
+
+        Net::Server::MultiPlex allows for one process to simultaneously
+        handle multiple connections (but requires rewriting the
+        process_request code to operate in a more "packet-like" manner).
+
+        Net::Server::Fork forks off a new child process for each incoming
+        connection.
+
+        Net::Server::PreForkSimple starts up a fixed number of processes
+        that all accept on incoming connections.
+
+        Net::Server::PreFork starts up a base number of child processes
+        which all accept on incoming connections. The server throttles the
+        number of processes running depending upon the number of requests
+        coming in (similar to concept to how Apache controls its child
+        processes in a PreFork server).
+
+        Read the documentation for each of the types for more information.
+
+    "$self->server_close"
+        This method is called once the server has been signaled to end, or
+        signaled for the server to restart (via HUP), or the loop method has
+        been exited.
+
+        This method takes care of cleaning up any remaining child processes,
+        setting appropriate flags on sockets (for HUPing), closing up
+        logging, and then closing open sockets.
+
+MAIN CLIENT CONNETION methods METHODS
+    "$self->run_client_connection"
+        This method is run after the server has accepted and received a
+        client connection. The full process flow is listed above under
+        PROCESS FLOWS. This method takes care of handling each client
+        connection.
+
+    "$self->post_accept"
+        This method opens STDIN and STDOUT to the client socket. This allows
+        any of the methods during the run_client_connection phase to print
+        directly to and read directly from the client socket.
+
+    "$self->get_client_info"
+        This method looks up information about the client connection such as
+        ip address, socket type, and hostname (as needed).
+
+    "$self->allow_deny"
+        This method uses the rules defined in the allow and deny
+        configuration parameters to determine if the ip address should be
+        accepted.
+
+    "$self->process_request"
+        This method is intended to handle all of the client communication.
+        At this point STDIN and STDOUT are opened to the client, the ip
+        address has been verified. The server can then interact with the
+        client connection according to whatever API or protocol the server
+        is implementing.
+
+        This is the main method to override.
+
+        The default method implements a simple echo server that will repeat
+        whatever is sent. It will quit the child if "quit" is sent, and will
+        exit the server if "exit" is sent.
+
+    "$self->post_process_request"
+        This method is used to clean up the client connection and to handle
+        any parent/child accounting for the forking servers.
 
 HOOKS
     "Net::Server" provides a number of "hooks" allowing for servers layered
-    on top of "Net::Server" to respond at different levels of execution.
+    on top of "Net::Server" to respond at different levels of execution
+    without having to "SUPER" class the main built-in methods. The placement
+    of the hooks can be seen in the PROCESS FLOW section.
 
     "$self->configure_hook()"
         This hook takes place immediately after the "->run()" method is
@@ -678,6 +814,59 @@ HOOKS
     "$self->restart_close_hook"
         This hook occurs if a server has been HUPed (restarted via the HUP
         signal. It occurs just before restarting the server via exec.
+
+OTHER METHODS
+    "$self->default_values"
+        Allow for returning configuration values that will be used if no
+        other value could be found.
+
+        Should return a hashref.
+
+            sub default_values {
+              return {
+                port => 20201,
+              };
+            }
+
+    "$self->new"
+        As of Net::Server 0.91 there is finally a new method. This method
+        takes a class name and an argument hashref as parameters. The
+        argument hashref becomes the "server" property of the object.
+
+           package MyPackage;
+           use base qw(Net::Server);
+
+           my $obj = MyPackage->new({port => 20201});
+
+           # same as
+
+           my $obj = bless {server => {port => 20201}}, 'MyPackage';
+
+    "$self->log"
+        Parameters are a log_level and a message.
+
+        If log_level is set to 'Sys::Syslog', the parameters may alternately
+        be a log_level, a format string, and format string parameters. (The
+        second parameter is assumed to be a format string if additional
+        arguments are passed along). Passing arbitrary format strings to
+        Sys::Syslog will allow the server to be vulnerable to exploit. The
+        server maintainer should make sure that any string treated as a
+        format string is controlled.
+
+            # assuming log_file = 'Sys::Syslog'
+
+            $self->log(1, "My Message with %s in it");
+            # sends "%s", "My Message with %s in it" to syslog
+
+            $self->log(1, "My Message with %s in it", "Foo");
+            # sends "My Message with %s in it", "Foo" to syslog
+
+        If log_file is set to a file (other than Sys::Syslog), the message
+        will be appended to the log file by calling the write_to_log_hook.
+
+    "$self->shutdown_sockets"
+        This method will close any remaining open sockets. This is called at
+        the end of the server_close method.
 
 RESTARTING
     Each of the server personalities (except for INET), support restarting
@@ -783,6 +972,10 @@ THANKS
     Thanks to various other people for bug fixes over the years. These and
     future thank-you's are available in the Changes file as well as CVS
     comments.
+
+    Thanks to Ben Cohen and tye (on Permonks) for finding and diagnosing
+    more correct behavior for dealing with re-opening STDIN and STDOUT on
+    the client handles.
 
 SEE ALSO
     Please see also Net::Server::Fork, Net::Server::INET,

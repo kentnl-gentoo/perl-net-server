@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #
-#  $Id: MultiType.pm,v 1.6 2005/12/05 20:36:27 rhandom Exp $
+#  $Id: MultiType.pm,v 1.7 2006/03/08 21:30:11 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -105,7 +105,7 @@ sub run {
 
   ### now run as the new type of thingy
   ### passing self, instead of package, doesn't instantiate a new object
-  $self->SUPER::run();
+  $self->SUPER::run(@_);
 
 }
 
