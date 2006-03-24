@@ -719,7 +719,8 @@ MAIN CLIENT CONNETION methods METHODS
         At this point STDIN and STDOUT are opened to the client, the ip
         address has been verified. The server can then interact with the
         client connection according to whatever API or protocol the server
-        is implementing.
+        is implementing. Note that the stub implementation uses STDIN and
+        STDOUT and will not work if the no_client_stdout flag is set.
 
         This is the main method to override.
 
@@ -988,6 +989,10 @@ THANKS
     Thanks to Ben Cohen and tye (on Permonks) for finding and diagnosing
     more correct behavior for dealing with re-opening STDIN and STDOUT on
     the client handles.
+
+    Thanks to Mark Martinec for trouble shooting other problems with STDIN
+    and STDOUT (he proposed having a flag that is now the no_client_stdout
+    flag).
 
 SEE ALSO
     Please see also Net::Server::Fork, Net::Server::INET,

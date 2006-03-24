@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.87 2006/03/22 17:15:51 rhandom Exp $
+#  $Id: Server.pm,v 1.88 2006/03/23 15:02:01 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -36,7 +36,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.92';
+$VERSION = '0.93';
 
 ###----------------------------------------------------------------###
 
@@ -751,7 +751,7 @@ sub get_client_info {
   }
 
   ### read information about this connection
-  my $sockname = getsockname( STDIN );
+  my $sockname = getsockname( $sock );
   if( $sockname ){
     ($prop->{sockport}, $prop->{sockaddr})
       = Socket::unpack_sockaddr_in( $sockname );
@@ -770,7 +770,7 @@ sub get_client_info {
     $proto_type = 'UDP';
     ($prop->{peerport} ,$prop->{peeraddr})
       = Socket::sockaddr_in( $prop->{udp_peer} );
-  }elsif( $prop->{peername} = getpeername( STDIN ) ){
+  }elsif( $prop->{peername} = getpeername( $sock ) ){
     ($prop->{peerport}, $prop->{peeraddr})
       = Socket::unpack_sockaddr_in( $prop->{peername} );
   }
@@ -2227,7 +2227,9 @@ This method is intended to handle all of the client communication.
 At this point STDIN and STDOUT are opened to the client, the ip
 address has been verified.  The server can then
 interact with the client connection according to whatever API or
-protocol the server is implementing.
+protocol the server is implementing.  Note that the stub implementation
+uses STDIN and STDOUT and will not work if the no_client_stdout flag
+is set.
 
 This is the main method to override.
 
@@ -2542,6 +2544,9 @@ as well as CVS comments.
 Thanks to Ben Cohen and tye (on Permonks) for finding and diagnosing
 more correct behavior for dealing with re-opening STDIN and STDOUT
 on the client handles.
+
+Thanks to Mark Martinec for trouble shooting other problems with
+STDIN and STDOUT (he proposed having a flag that is now the no_client_stdout flag).
 
 =head1 SEE ALSO
 
