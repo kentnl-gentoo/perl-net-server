@@ -220,7 +220,8 @@ ARGUMENTS
     There are five possible ways to pass arguments to Net::Server. They are
     *passing on command line*, *using a conf file*, *passing parameters to
     run*, *returning values in the default_values method*, or *using a
-    pre-built object to call the run method*.
+    pre-built object to call the run method* (such as that returned by the
+    new method).
 
     Arguments consist of key value pairs. On the commandline these pairs
     follow the POSIX fashion of "--key value" or "--key=value", and also
@@ -238,9 +239,9 @@ ARGUMENTS
       use Net::Server;
       @ISA = qw(Net::Server);
 
-      my $server = bless {
+      my $server = MyPackage->new({
         key1 => 'val1',
-        }, 'MyPackage';
+      });
 
       $server->run();
       #--------------- file test.pl ---------------
@@ -368,17 +369,27 @@ ARGUMENTS
         will default to "tcp". If *host* is not specified, *host* will
         default to "host" specified in the arguments. If "host" is not
         specified there it will default to "*". Default port is 20203.
+        Configuration passed to new or run may be either a scalar containing
+        a single port number or an arrayref of ports.
 
     host
         Local host or addr upon which to bind port. If a value of '*' is
         given, the server will bind that port on all available addresses on
-        the box. See Net::Server::Proto. See IO::Socket.
+        the box. See Net::Server::Proto. See IO::Socket. Configuration
+        passed to new or run may be either a scalar containing a single host
+        or an arrayref of hosts - if the hosts array is shorter than the
+        ports array, the last host entry will be used to augment the hosts
+        arrary to the size of the ports array.
 
     proto
         See Net::Server::Proto. Protocol to use when binding ports. See
         IO::Socket. As of release 0.70, Net::Server supports tcp, udp, and
         unix. Other types will need to be added later (or custom modules
-        extending the Net::Server::Proto class may be used).
+        extending the Net::Server::Proto class may be used). Configuration
+        passed to new or run may be either a scalar containing a single
+        proto or an arrayref of protos - if the protos array is shorter than
+        the ports array, the last proto entry will be used to augment the
+        protos arrary to the size of the ports array.
 
     listen
           See L<IO::Socket>.  Not used with udp protocol (or UNIX SOCK_DGRAM).
@@ -445,6 +456,23 @@ ARGUMENTS
 
         This option has no affect on STDIN and STDOUT which has a magic
         client property that is tied to the already open STDIN and STDOUT.
+
+    leave_children_open_on_hup
+        Boolean. Default undef (not set). If set, the parent will not
+        attempt to close child processes if the parent receives a SIG HUP.
+        The parent will rebind the the open port and begin tracking a fresh
+        set of children.
+
+        Children of a Fork server will exit after their current request.
+        Children of a Prefork type server will finish the current request
+        and then exit.
+
+        Note - the newly restarted parent will start up a fresh set of
+        servers on fork servers. The new parent will attempt to keep track
+        of the children from the former parent but custom communication
+        channels (open pipes from the child to the old parent) will no
+        longer be available to the old child processes. New child processes
+        will still connect properly to the new parent.
 
 PROPERTIES
     All of the "ARGUMENTS" listed above become properties of the server
@@ -693,7 +721,7 @@ MAIN SERVER METHODS
         setting appropriate flags on sockets (for HUPing), closing up
         logging, and then closing open sockets.
 
-MAIN CLIENT CONNETION methods METHODS
+MAIN CLIENT CONNECTION METHODS
     "$self->run_client_connection"
         This method is run after the server has accepted and received a
         client connection. The full process flow is listed above under
@@ -993,6 +1021,18 @@ THANKS
     Thanks to Mark Martinec for trouble shooting other problems with STDIN
     and STDOUT (he proposed having a flag that is now the no_client_stdout
     flag).
+
+    Thanks to David (DSCHWEI) on cpan for asking for the nofatal option with
+    syslog.
+
+    Thanks to Andreas Kippnick and Peter Beckman for suggesting leaving open
+    child connections open during a HUP (this is now available via the
+    leave_children_open_on_hup flag).
+
+    Thanks to LUPE on cpan for helping patch HUP with taint on.
+
+    Thanks to Michael Virnstein for fixing a bug in the check_for_dead
+    section of PreFork server.
 
 SEE ALSO
     Please see also Net::Server::Fork, Net::Server::INET,

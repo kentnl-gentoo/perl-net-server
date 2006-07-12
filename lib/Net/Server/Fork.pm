@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.18 2006/03/08 16:07:33 rhandom Exp $
+#  $Id: Fork.pm,v 1.20 2006/07/08 21:20:40 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -80,6 +80,11 @@ sub loop {
 
   ### get ready for children
   $prop->{children} = {};
+  if ($ENV{HUP_CHILDREN}) {
+      my %children = map {/^(\w+)$/; $1} split(/\s+/, $ENV{HUP_CHILDREN});
+      $children{$_} = {status => $children{$_}, hup => 1} foreach keys %children;
+      $prop->{children} = \%children;
+  }
 
   ### register some of the signals for safe handling
   register_sig(PIPE => 'IGNORE',

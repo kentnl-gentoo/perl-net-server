@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.88 2006/03/23 15:02:01 rhandom Exp $
+#  $Id: Server.pm,v 1.97 2006/07/12 02:48:53 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -36,13 +36,13 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.93';
+$VERSION = '0.94';
 
 ###----------------------------------------------------------------###
 
 sub new {
   my $class = shift || die "Missing class";
-  my $args  = shift || {};
+  my $args  = @_ == 1 ? shift : {@_};
   my $self  = bless {server => { %$args }}, $class;
   return $self;
 }
@@ -94,7 +94,7 @@ sub run {
   ### pass package or object
   my $self = ref($_[0]) ? shift() : shift->new;
 
-  $self->_initialize(@_);     # configure all parameters
+  $self->_initialize(@_ == 1 ? %{$_[0]} : @_);     # configure all parameters
 
   $self->post_configure;      # verification of passed parameters
 
@@ -167,14 +167,15 @@ sub _get_commandline {
   if (open _CMDLINE, "/proc/$$/cmdline") { # unix specific
     my $line = do { local $/ = undef; <_CMDLINE> };
     close _CMDLINE;
-    if ($line) {
-      return [split /\0/, $line];
+    if ($line =~ /^(.+)$/) { # need to untaint to allow for later hup
+      return [split /\0/, $1];
     }
   }
 
   my $script = $0;
-  $script = $ENV{'PWD'} .'/'. $script if $script =~ m|^\.+/| && $ENV{'PWD'}; # add absolute to relative
-  return [ $script, @ARGV ]
+  $script = $ENV{'PWD'} .'/'. $script if $script =~ m|^[^/]+/| && $ENV{'PWD'}; # add absolute to relative
+  $script =~ /^(.+)$/; # untaint for later use in hup
+  return [ $1, @ARGV ]
 }
 
 sub commandline {
@@ -256,8 +257,10 @@ sub post_configure {
     $prop->{syslog_ident} = ($ident =~ /^(\w+)$/)
       ? $1 : 'net_server';
 
+    require Sys::Syslog;
+
     my $opt = defined($prop->{syslog_logopt})
-      ? $prop->{syslog_logopt} : 'pid';
+      ? $prop->{syslog_logopt} : $Sys::Syslog::VERSION ge '0.15' ? 'pid,nofatal' : 'pid';
     $prop->{syslog_logopt} = ($opt =~ /^((cons|ndelay|nowait|pid)($|\|))*/)
       ? $1 : 'pid';
 
@@ -266,7 +269,6 @@ sub post_configure {
     $prop->{syslog_facility} = ($fac =~ /^((\w+)($|\|))*/)
       ? $1 : 'daemon';
 
-    require Sys::Syslog;
     Sys::Syslog::setlogsock($prop->{syslog_logsock}) || die "Syslog err [$!]";
     if( ! Sys::Syslog::openlog($prop->{syslog_ident},
                                $prop->{syslog_logopt},
@@ -364,38 +366,45 @@ sub pre_bind {
   $self->log(2,$self->log_time ." ". ref($self) .$ns_type. " starting! pid($$)");
 
   ### set a default port, host, and proto
-  if( ! defined( $prop->{port} )
-      || ! ref( $prop->{port} )
-      || ! @{ $prop->{port} } ){
+  $prop->{port} = [$prop->{port}] if defined($prop->{port}) && ! ref($prop->{port});
+  if (! defined($prop->{port}) || ! @{ $prop->{port} }) {
     $self->log(2,"Port Not Defined.  Defaulting to '20203'\n");
     $prop->{port}  = [ 20203 ];
   }
 
-  $prop->{host} = '*' unless defined($prop->{host});
-  $prop->{host} = ($prop->{host}=~/^([\w\.\-\*\/]+)$/)
-    ? $1 : $self->fatal("Unsecure host \"$prop->{host}\"");
+  $prop->{host} = []              if ! defined $prop->{host};
+  $prop->{host} = [$prop->{host}] if ! ref     $prop->{host};
+  push @{ $prop->{host} }, (($prop->{host}->[-1]) x (@{ $prop->{port} } - @{ $prop->{host}})); # augment hosts with as many as port
+  foreach my $host (@{ $prop->{host} }) {
+    $host = '*' if ! defined $host || ! length $host;;
+    $host = ($host =~ /^([\w\.\-\*\/]+)$/) ? $1 : $self->fatal("Unsecure host \"$host\"");
+  }
 
-  $prop->{proto} = 'tcp' unless defined($prop->{proto});
-  $prop->{proto} = ($prop->{proto}=~/^(\w+)$/)
-    ? $1 : $self->fatal("Unsecure proto \"$prop->{host}\"");
+  $prop->{proto} = []               if ! defined $prop->{proto};
+  $prop->{proto} = [$prop->{proto}] if ! ref     $prop->{proto};
+  push @{ $prop->{proto} }, (($prop->{proto}->[-1]) x (@{ $prop->{port} } - @{ $prop->{proto}})); # augment hosts with as many as port
+  foreach my $proto (@{ $prop->{proto} }) {
+      $proto ||= 'tcp';
+      $proto = ($proto =~ /^(\w+)$/) ? $1 : $self->fatal("Unsecure proto \"$proto\"");
+  }
 
   ### loop through the passed ports
   ### set up parallel arrays of hosts, ports, and protos
   ### port can be any of many types (tcp,udp,unix, etc)
   ### see perldoc Net::Server::Proto for more information
   my %bound;
-  foreach my $port ( @{ $prop->{port} } ){
-    if ($bound{"$prop->{host}/$port/$prop->{proto}"} ++) {
-      $self->log(2, "Duplicate configuration (".uc($prop->{proto})." port $port on host ".$prop->{host}.") - skipping");
+  foreach (my $i = 0 ; $i < @{ $prop->{port} } ; $i++) {
+    my $port  = $prop->{port}->[$i];
+    my $host  = $prop->{host}->[$i];
+    my $proto = $prop->{proto}->[$i];
+    if ($bound{"$host/$port/$proto"}++) {
+      $self->log(2, "Duplicate configuration (".(uc $proto)." port $port on host $host - skipping");
       next;
     }
-    my $obj = $self->proto_object($prop->{host},
-                                  $port,
-                                  $prop->{proto},
-                                  ) || next;
+    my $obj = $self->proto_object($host, $port, $proto) || next;
     push @{ $prop->{sock} }, $obj;
   }
-  if( @{ $prop->{sock} } < 1 ){
+  if (! @{ $prop->{sock} }) {
     $self->fatal("No valid socket parameters found");
   }
 
@@ -1001,13 +1010,18 @@ sub server_close{
 
   $self->log(2,$self->log_time . " Server closing!");
 
-  ### shut down children if any
-  if( defined $prop->{children} ){
-    $self->close_children();
-  }
+  if (defined $prop->{_HUP} && $prop->{leave_children_open_on_hup}) {
+      $self->hup_children;
 
-  ### allow for additional cleanup phase
-  $self->post_child_cleanup_hook();
+  } else {
+      ### shut down children if any
+      if( defined $prop->{children} ){
+          $self->close_children();
+      }
+
+      ### allow for additional cleanup phase
+      $self->post_child_cleanup_hook();
+  }
 
   ### remove files
   if( defined $prop->{lock_file}
@@ -1069,11 +1083,9 @@ sub close_children {
   my $self = shift;
   my $prop = $self->{server};
 
-  return unless defined $prop->{children} && %{ $prop->{children} };
+  return unless defined $prop->{children} && scalar keys %{ $prop->{children} };
 
-  while ( %{ $prop->{children} } ){
-    my $pid = each %{ $prop->{children} };
-
+  foreach my $pid (keys %{ $prop->{children} }) {
     ### if it is killable, kill it
     if( ! defined($pid) || kill(15,$pid) || ! kill(0,$pid) ){
       $self->delete_child( $pid );
@@ -1085,6 +1097,22 @@ sub close_children {
   ### eventually this should probably use &check_sigs
   1 while waitpid(-1, POSIX::WNOHANG()) > 0;
 
+}
+
+
+sub is_prefork { 0 }
+
+sub hup_children {
+  my $self = shift;
+  my $prop = $self->{server};
+
+  return unless defined $prop->{children} && scalar keys %{ $prop->{children} };
+  return if ! $self->is_prefork;
+  $self->log(2, "Sending children hup signal during HUP on prefork server\n");
+
+  foreach my $pid (keys %{ $prop->{children} }) {
+      kill(1,$pid); # try to hup it
+  }
 }
 
 sub post_child_cleanup_hook {}
@@ -1128,6 +1156,10 @@ sub sig_hup {
   }
 
   $ENV{BOUND_SOCKETS} = join("\n", @fd);
+
+  if ($prop->{leave_children_open_on_hup} && scalar keys %{ $prop->{children} }) {
+      $ENV{HUP_CHILDREN} = join("\n", map {"$_\t$prop->{children}->{$_}->{status}"} sort keys %{ $prop->{children} });
+  }
 }
 
 ### restart the server using prebound sockets
@@ -1238,7 +1270,7 @@ sub options {
   my $prop = $self->{server};
   my $ref  = shift;
 
-  foreach ( qw(port allow deny cidr_allow cidr_deny) ){
+  foreach ( qw(port host proto allow deny cidr_allow cidr_deny) ){
     if (! defined $prop->{$_}) {
       $prop->{$_} = [];
     } elsif (! ref $prop->{$_}) {
@@ -1250,11 +1282,12 @@ sub options {
   foreach ( qw(conf_file
                user group chroot log_level
                log_file pid_file background setsid
-               host proto listen reverse_lookups
+               listen reverse_lookups
                syslog_logsock syslog_ident
                syslog_logopt syslog_facility
                no_close_by_child
                no_client_stdout
+               leave_children_open_on_hup
                ) ){
     $ref->{$_} = \$prop->{$_};
   }
@@ -1271,7 +1304,7 @@ sub process_args {
   my $template = shift; # allow for custom passed in template
 
   ### if no template is passed, obtain our own
-  if( ! $template || ! ref($template) ){
+  if (! $template || ! ref($template)) {
     $template = {};
     $self->options( $template );
   }
@@ -1280,34 +1313,39 @@ sub process_args {
   ### previously set values so that command line arguments win
   my %previously_set;
 
-  foreach (my $i=0 ; $i < @$ref ; $i++ ){
+  foreach (my $i=0 ; $i < @$ref ; $i++) {
 
-    if( $ref->[$i] =~ /^(?:--)?(\w+)([=\ ](\S+))?$/
-        && exists $template->{$1} ){
+    if ($ref->[$i] =~ /^(?:--)?(\w+)([=\ ](\S+))?$/
+        && exists $template->{$1}) {
       my ($key,$val) = ($1,$3);
       splice( @$ref, $i, 1 );
-      if( not defined($val) ){
+      if (not defined($val)) {
         if ($i > $#$ref
             || ($ref->[$i] && $ref->[$i] =~ /^--\w+/)) {
           $val = 1; # allow for options such as --setsid
         } else {
           $val = splice( @$ref, $i, 1 );
+          if (ref $val) {
+            die "Found an invalid configuration value for \"$key\" ($val)" if ref($val) ne 'ARRAY';
+            $val = $val->[0] if @$val == 1;
+          }
         }
       }
       $i--;
-      $val =~ s/%([A-F0-9])/chr(hex($1))/eig;
+      $val =~ s/%([A-F0-9])/chr(hex $1)/eig if ! ref $val;;
 
-      if( ref $template->{$key} eq 'ARRAY' ){
+      if (ref $template->{$key} eq 'ARRAY') {
         if (! defined $previously_set{$key}) {
           $previously_set{$key} = scalar @{ $template->{$key} };
         }
         next if $previously_set{$key};
-        push( @{ $template->{$key} }, $val );
-      }else{
+        push @{ $template->{$key} }, ref($val) ? @$val : $val;
+      } else {
         if (! defined $previously_set{$key}) {
           $previously_set{$key} = defined(${ $template->{$key} }) ? 1 : 0;
         }
         next if $previously_set{$key};
+        die "Found multiple values on the configuration item \"$key\" which expects only one value" if ref $val;
         ${ $template->{$key} } = $val;
       }
     }
@@ -1653,7 +1691,8 @@ There are five possible ways to pass arguments to
 Net::Server.  They are I<passing on command line>, I<using a
 conf file>, I<passing parameters to run>, I<returning values
 in the default_values method>, or I<using a
-pre-built object to call the run method>.
+pre-built object to call the run method> (such as that returned
+by the new method).
 
 Arguments consist of key value pairs.  On the commandline
 these pairs follow the POSIX fashion of C<--key value> or
@@ -1672,9 +1711,9 @@ a prebuilt object can best be shown in the following code:
   use Net::Server;
   @ISA = qw(Net::Server);
 
-  my $server = bless {
+  my $server = MyPackage->new({
     key1 => 'val1',
-    }, 'MyPackage';
+  });
 
   $server->run();
   #--------------- file test.pl ---------------
@@ -1821,13 +1860,19 @@ default to the C<proto> specified in the arguments.  If C<proto> is not
 specified there it will default to "tcp".  If I<host> is not
 specified, I<host> will default to C<host> specified in the
 arguments.  If C<host> is not specified there it will
-default to "*".  Default port is 20203.
+default to "*".  Default port is 20203.  Configuration passed
+to new or run may be either a scalar containing a single port
+number or an arrayref of ports.
 
 =item host
 
 Local host or addr upon which to bind port.  If a value of '*' is
 given, the server will bind that port on all available addresses
-on the box.  See L<Net::Server::Proto>. See L<IO::Socket>.
+on the box.  See L<Net::Server::Proto>. See L<IO::Socket>.  Configuration
+passed to new or run may be either a scalar containing a single
+host or an arrayref of hosts - if the hosts array is shorter than
+the ports array, the last host entry will be used to augment the
+hosts arrary to the size of the ports array.
 
 =item proto
 
@@ -1835,7 +1880,11 @@ See L<Net::Server::Proto>.
 Protocol to use when binding ports.  See L<IO::Socket>.  As
 of release 0.70, Net::Server supports tcp, udp, and unix.  Other
 types will need to be added later (or custom modules extending the
-Net::Server::Proto class may be used).
+Net::Server::Proto class may be used).  Configuration
+passed to new or run may be either a scalar containing a single
+proto or an arrayref of protos - if the protos array is shorter than
+the ports array, the last proto entry will be used to augment the
+protos arrary to the size of the ports array.
 
 =item listen
 
@@ -1919,6 +1968,21 @@ their own connections to STDIN and STDOUT.
 
 This option has no affect on STDIN and STDOUT which has a magic client
 property that is tied to the already open STDIN and STDOUT.
+
+=item leave_children_open_on_hup
+
+Boolean.  Default undef (not set).  If set, the parent will not attempt
+to close child processes if the parent receives a SIG HUP.  The parent
+will rebind the the open port and begin tracking a fresh set of children.
+
+Children of a Fork server will exit after their current request.  Children
+of a Prefork type server will finish the current request and then exit.
+
+Note - the newly restarted parent will start up a fresh set of servers on
+fork servers.  The new parent will attempt to keep track of the children from
+the former parent but custom communication channels (open pipes from the child
+to the old parent) will no longer be available to the old child processes.  New
+child processes will still connect properly to the new parent.
 
 =back
 
@@ -2193,7 +2257,7 @@ logging, and then closing open sockets.
 
 =back
 
-=head1 MAIN CLIENT CONNETION methods METHODS
+=head1 MAIN CLIENT CONNECTION METHODS
 
 =over 4
 
@@ -2547,6 +2611,16 @@ on the client handles.
 
 Thanks to Mark Martinec for trouble shooting other problems with
 STDIN and STDOUT (he proposed having a flag that is now the no_client_stdout flag).
+
+Thanks to David (DSCHWEI) on cpan for asking for the nofatal option with syslog.
+
+Thanks to Andreas Kippnick and Peter Beckman for suggesting leaving open child connections
+open during a HUP (this is now available via the leave_children_open_on_hup flag).
+
+Thanks to LUPE on cpan for helping patch HUP with taint on.
+
+Thanks to Michael Virnstein for fixing a bug in the check_for_dead section
+of PreFork server.
 
 =head1 SEE ALSO
 

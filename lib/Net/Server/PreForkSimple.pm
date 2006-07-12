@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #
-#  $Id: PreForkSimple.pm,v 1.21 2006/03/08 16:04:39 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.23 2006/07/08 21:18:35 rhandom Exp $
 #
 #  Copyright (C) 2001-2005
 #
@@ -133,6 +133,11 @@ sub loop {
 
   ### get ready for children
   $prop->{children} = {};
+  if ($ENV{HUP_CHILDREN}) {
+      my %children = map {/^(\w+)$/; $1} split(/\s+/, $ENV{HUP_CHILDREN});
+      $children{$_} = {status => $children{$_}, hup => 1} foreach keys %children;
+      $prop->{children} = \%children;
+  }
 
   $self->log(3,"Beginning prefork ($prop->{max_servers} processes)\n");
 
@@ -225,7 +230,7 @@ sub run_child {
 ### hooks at the beginning and end of forked child processes
 sub child_init_hook {}
 sub child_finish_hook {}
-
+sub is_prefork { 1 }
 
 
 ### We can only let one process do the selecting at a time
