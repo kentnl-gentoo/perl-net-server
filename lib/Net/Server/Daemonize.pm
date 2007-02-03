@@ -2,9 +2,9 @@
 #
 #  Net::Server::Daemonize - Daemonization utilities.
 #
-#  $Id: Daemonize.pm,v 1.15 2005/12/05 19:56:37 rhandom Exp $
+#  $Id: Daemonize.pm,v 1.17 2007/02/03 05:41:05 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Jeremy Howard
 #    j+daemonize@howard.fm
@@ -191,7 +191,7 @@ sub set_uid {
   my $uid = get_uid( shift() );
 
   POSIX::setuid($uid);
-  if ($< != $uid) {
+  if ($< != $uid || $> != $uid) { # check $> also (rt #21262)
     $< = $> = $uid; # try again - needed by some 5.8.0 linux systems (rt #13450)
     if ($< != $uid) {
       die "Couldn't become uid \"$uid\": $!\n";

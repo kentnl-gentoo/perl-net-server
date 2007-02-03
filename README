@@ -2,18 +2,21 @@ NAME
     Net::Server - Extensible, general Perl server engine
 
 SYNOPSIS
-      #!/usr/bin/perl -w -T
-      package MyPackage;
+        #!/usr/bin/perl -w -T
+        package MyPackage;
 
-      use Net::Server;
-      @ISA = qw(Net::Server);
+        use base qw(Net::Server);
 
-      sub process_request {
-         #...code...
-      }
+        sub process_request {
+            my $self = shift;
+            while (<STDIN>) {
+                s/\r?\n$//;
+                print "You said \"$_\"\r\n"; # basic echo
+                last if /quit/i;
+            }
+        }
 
-      MyPackage->run(port => 160);
-      exit;
+        MyPackage->run(port => 160);
 
 FEATURES
      * Single Server Mode
@@ -167,49 +170,45 @@ SAMPLE CODE
     timeouts to prevent Denial of Service while reading. (Other examples of
     using "Net::Server" can, or will, be included with this distribution).
 
-      #!/usr/bin/perl -w -T
-      #--------------- file test.pl ---------------
+        #!/usr/bin/perl -w -T
+        #--------------- file test.pl ---------------
 
-      package MyPackage;
+        package MyPackage;
 
-      use strict;
-      use vars qw(@ISA);
-      use Net::Server::PreFork; # any personality will do
+        use strict;
+        use base qw(Net::Server::PreFork); # any personality will do
 
-      @ISA = qw(Net::Server::PreFork);
+        MyPackage->run;
 
-      MyPackage->run();
-      exit;
+        ### over-ridden subs below
 
-      ### over-ridden subs below
+        sub process_request {
+            my $self = shift;
+            eval {
 
-      sub process_request {
-        my $self = shift;
-        eval {
+                local $SIG{ALRM} = sub { die "Timed Out!\n" };
+                my $timeout = 30; # give the user 30 seconds to type a line
 
-          local $SIG{ALRM} = sub { die "Timed Out!\n" };
-          my $timeout = 30; # give the user 30 seconds to type a line
+                my $previous_alarm = alarm($timeout);
+                while( <STDIN> ){
+                    s/\r?\n$//;
+                    print "You said \"$_\"\r\n";
+                    alarm($timeout);
+                }
+                alarm($previous_alarm);
 
-          my $previous_alarm = alarm($timeout);
-          while( <STDIN> ){
-            s/\r?\n$//;
-            print "You said \"$_\"\r\n";
-            alarm($timeout);
-          }
-          alarm($previous_alarm);
+            };
 
-        };
+            if( $@=~/timed out/i ){
+                print STDOUT "Timed Out.\r\n";
+                return;
+            }
 
-        if( $@=~/timed out/i ){
-          print STDOUT "Timed Out.\r\n";
-          return;
         }
 
-      }
+        1;
 
-      1;
-
-      #--------------- file test.pl ---------------
+        #--------------- file test.pl ---------------
 
     Playing this file from the command line will invoke a Net::Server using
     the PreFork personality. When building a server layer over the
@@ -223,6 +222,13 @@ ARGUMENTS
     pre-built object to call the run method* (such as that returned by the
     new method).
 
+    The "options" method is used to determine which arguments the server
+    will search for. Any arguments found from the command line, parameters
+    passed to run, and arguments found in the conf_file will be matched
+    against the keys of the options template. Any commandline parameters
+    that do not match will be left in place and can be further processed by
+    the server in the various hooks (by looking at @ARGV).
+
     Arguments consist of key value pairs. On the commandline these pairs
     follow the POSIX fashion of "--key value" or "--key=value", and also
     "key=value". In the conf file the parameter passing can best be shown by
@@ -231,20 +237,18 @@ ARGUMENTS
     "Net::Server-"run(key1 => 'val1')>. Passing arguments via a prebuilt
     object can best be shown in the following code:
 
-      #!/usr/bin/perl -w -T
-      #--------------- file test2.pl ---------------
-      package MyPackage;
-      use strict;
-      use vars (@ISA);
-      use Net::Server;
-      @ISA = qw(Net::Server);
+        #!/usr/bin/perl -w -T
+        #--------------- file test2.pl ---------------
+        package MyPackage;
+        use strict;
+        use base qw(Net::Server);
 
-      my $server = MyPackage->new({
-        key1 => 'val1',
-      });
+        my $server = MyPackage->new({
+            key1 => 'val1',
+        });
 
-      $server->run();
-      #--------------- file test.pl ---------------
+        $server->run;
+        #--------------- file test2.pl ---------------
 
     All five methods for passing arguments may be used at the same time.
     Once an argument has been set, it is not over written if another method
@@ -268,8 +272,42 @@ ARGUMENTS
 
     Key/value pairs used by the server are removed by the configuration
     process so that server layers on top of "Net::Server" can pass and read
-    their own parameters. Currently, Getopt::Long is not used. The following
-    arguments are available in the default "Net::Server" or
+    their own parameters.
+
+ADDING CUSTOM ARGUMENTS
+    It is possible to add in your own custom parameters to those parsed by
+    Net::Server. The following code shows how this is done:
+
+        sub options {
+            my $self     = shift;
+            my $prop     = $self->{'server'};
+            my $template = shift;
+
+            ### setup options in the parent classes
+            $self->SUPER::options($template);
+
+            ### add a single value option
+            $prop->{'my_option'} = undef;
+            $template->{'my_option'} = \ $prop->{'my_option'};
+
+            ### add a multi value option
+            $prop->{'an_arrayref_item'} ||= [];
+            $template->{'an_arrayref_item'} = $prop->{'an_arrayref_item'};
+        }
+
+    Overriding the "options" method allows for adding your own custom
+    fields. A template hashref is passed in, that should then be modified to
+    contain an of your custom fields. Fields which are intended to receive a
+    single scalar value should have a reference to the destination scalar
+    given. Fields which are intended to receive multiple values should
+    reference the corresponding destination arrayref.
+
+    You are responsible for validating your custom options once they have
+    been parsed. The post_configure_hook is a good place to do your
+    validation.
+
+DEFAULT ARGUMENTS FOR Net::Server
+    The following arguments are available in the default "Net::Server" or
     "Net::Server::Single" modules. (Other personalities may use additional
     parameters and may optionally not use parameters from the base class.)
 
@@ -632,7 +670,7 @@ PROCESS FLOW
 
       $self->shutdown_sockets;
 
-      exit;
+      $self->server_exit;
 
 MAIN SERVER METHODS
     "$self->run"
@@ -721,6 +759,11 @@ MAIN SERVER METHODS
         setting appropriate flags on sockets (for HUPing), closing up
         logging, and then closing open sockets.
 
+    "$self->server_exit"
+        This method is called at the end of server_close. It calls exit, but
+        may be overridden to do other items. At this point all services
+        should be shut down.
+
 MAIN CLIENT CONNECTION METHODS
     "$self->run_client_connection"
         This method is run after the server has accepted and received a
@@ -765,6 +808,22 @@ HOOKS
     on top of "Net::Server" to respond at different levels of execution
     without having to "SUPER" class the main built-in methods. The placement
     of the hooks can be seen in the PROCESS FLOW section.
+
+    Almost all of the default hook methods do nothing. To use a hook you
+    simply need to override the method in your subclass. For example to add
+    your own post_configure_hook you could do something like the following:
+
+        package MyServer;
+
+        sub post_configure_hook {
+            my $self = shift;
+            my $prop = $self->{'server'};
+
+            # do some validation here
+        }
+
+    The following describes the hooks available in the plain Net::Server
+    class (other flavors such as Fork or PreFork have additional hooks).
 
     "$self->configure_hook()"
         This hook takes place immediately after the "->run()" method is
@@ -968,15 +1027,14 @@ INSTALL
       make install
 
 AUTHOR
-    Paul T. Seamons <paul at seamons.com>
+    Paul Seamons <paul at seamons.com>
 
 THANKS
     Thanks to Rob Brown (bbb at cpan.org) for help with miscellaneous
     concepts such as tracking down the serialized select via flock ala
     Apache and the reference to IO::Select making multiport servers
     possible. And for researching into allowing sockets to remain open upon
-    exec (making HUP possible). Rob Brown is also the maintainer for
-    Net::Server.
+    exec (making HUP possible).
 
     Thanks to Jonathan J. Miner <miner at doit.wisc.edu> for patching a
     blatant problem in the reverse lookups.
@@ -1034,16 +1092,52 @@ THANKS
     Thanks to Michael Virnstein for fixing a bug in the check_for_dead
     section of PreFork server.
 
+    Thanks to Rob Mueller for patching PreForkSimple to only open lock_file
+    once during parent call. This patch should be portable on systems
+    supporting flock. Rob also suggested not closing STDIN/STDOUT but
+    instead reopening them to /dev/null to prevent spurious warnings. Also
+    suggested short circuit in post_accept if in UDP. Also for cleaning up
+    some of the child managment code of PreFork.
+
+    Thanks to Mark Martinec for suggesting additional log messages for
+    failure during accept.
+
+    Thanks to Bill Nesbitt and Carlos Velasco for pointing out double
+    decrement bug in PreFork.pm (rt #21271)
+
+    Thanks to John W. Krahn for pointing out glaring precended with
+    non-parened open and ||.
+
+    Thanks to Ricardo Signes for pointing out setuid bug for perl 5.6.1 (rt
+    #21262).
+
+    Thanks to Carlos Velasco for updating the Syslog options (rt #21265).
+
+    Thanks to Steven Lembark for pointing out that no_client_stdout wasn't
+    working with the Multiplex server.
+
+    Thanks to Peter Beckman for suggesting allowing Sys::SysLog keyworks be
+    passed through the ->log method and for suggesting we allow more types
+    of characters through in syslog_ident. Also to Peter Beckman for
+    pointing out that a poorly setup localhost will cause tests to hang.
+
+    Thanks to Curtis Wilbar for pointing out that the Fork server called
+    post_accept_hook twice. Changed to only let the child process call this,
+    but added the pre_fork_hook method.
+
+    And just a general Thanks You to everybody who is using Net::Server or
+    who has contributed fixes over the years.
+
 SEE ALSO
     Please see also Net::Server::Fork, Net::Server::INET,
     Net::Server::PreForkSimple, Net::Server::PreFork,
     Net::Server::MultiType, Net::Server::Single
 
 AUTHOR
-      Paul Seamons <paul@seamons.com>
+      Paul Seamons <paul at seamons.com>
       http://seamons.com/
 
-      Rob Brown <bbb@cpan.org>
+      Rob Brown <bbb at cpan.org>
 
 LICENSE
       This package may be distributed under the terms of either the

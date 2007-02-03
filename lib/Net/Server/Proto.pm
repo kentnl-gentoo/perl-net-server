@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto - Net::Server Protocol compatibility layer
 #
-#  $Id: Proto.pm,v 1.7 2005/11/23 03:14:37 rhandom Exp $
+#  $Id: Proto.pm,v 1.8 2007/02/03 05:55:12 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com

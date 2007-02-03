@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto::UNIX - Net::Server Protocol module
 #
-#  $Id: UNIX.pm,v 1.10 2005/06/20 18:54:16 rhandom Exp $
+#  $Id: UNIX.pm,v 1.11 2007/02/03 05:56:22 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com

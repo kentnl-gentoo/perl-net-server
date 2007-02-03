@@ -2,9 +2,9 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.14 2005/12/03 16:17:47 rhandom Exp $
+#  $Id: Multiplex.pm,v 1.16 2007/02/03 05:54:50 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Rob Brown bbb@cpan,org
 #
@@ -103,9 +103,11 @@ sub setup_client_connection {
 
   ### Copied from Net::Server::post_accept...
   $prop->{requests} ++;
-  *STDIN  = \*{ $prop->{client} };
+  if (! $prop->{no_client_stdout}) {
+    *STDIN  = \*{ $prop->{client} };
 #  *STDOUT = \*{ $prop->{client} };
 #  STDIN->autoflush(1);
+  }
 
   ### Copied from Net::Server::run_client_connection...
   $self->get_client_info;     # determines information about peer and local
@@ -114,7 +116,9 @@ sub setup_client_connection {
          $self->allow_deny_hook ){  # user customizable hook
     $self->request_denied_hook;     # user customizable hook
     # Flush output buffer and close connection since it should be denied.
-    close (STDOUT);
+    if (! $prop->{no_client_stdout}) {
+      close (STDOUT);
+    }
     return 0;
   }
   return 1;
@@ -262,6 +266,7 @@ sub mux_timeout {
 
 sub _link_stdout {
   my $self = shift;
+  return if $self->{net_server}->{server}->{no_client_stdout};
   my $mux = shift;
   my $fh = shift;
   # Hook up STDOUT to the correct socket
@@ -275,6 +280,7 @@ sub _link_stdout {
 
 sub _unlink_stdout {
   my $self = shift;
+  return if $self->{net_server}->{server}->{no_client_stdout};
   my $x = tied *STDOUT;
   if ($x) {
     undef $x;

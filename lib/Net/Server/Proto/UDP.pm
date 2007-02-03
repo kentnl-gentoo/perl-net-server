@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto::UDP - Net::Server Protocol module
 #
-#  $Id: UDP.pm,v 1.12 2006/03/08 22:18:12 rhandom Exp $
+#  $Id: UDP.pm,v 1.13 2007/02/03 05:56:09 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com

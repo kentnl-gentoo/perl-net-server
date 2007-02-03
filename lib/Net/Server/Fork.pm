@@ -2,15 +2,13 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.20 2006/07/08 21:20:40 rhandom Exp $
+#  $Id: Fork.pm,v 1.22 2007/02/03 05:41:29 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com
 #    http://seamons.com/
-#
-#    Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -141,7 +139,6 @@ sub loop {
       }
     }
 
-    ### call the pre accept hook
     $self->pre_accept_hook;
 
     ### try to call accept
@@ -152,8 +149,7 @@ sub loop {
       next;
     }
 
-    ### call the post accept hook
-    $self->post_accept_hook;
+    $self->pre_fork_hook;
 
     ### fork a child so the parent can go back to listening
     my $pid = fork;
@@ -170,6 +166,7 @@ sub loop {
 
     ### child
     }else{
+      ### the child will call post_accept_hook
       $self->run_client_connection;
       exit;
 
@@ -257,6 +254,8 @@ sub close_children {
                  CHLD => 'DEFAULT',
                  );
 }
+
+sub pre_fork_hook {}
 
 1;
 
@@ -346,9 +345,13 @@ See L<Net::Server>
 
 This hook occurs just before the accept is called.
 
-=item C<$self-E<gt>post_accept_hook()>
+=item C<$self-E<gt>pre_fork_hook()>
 
 This hook occurs just after accept but before the fork.
+
+=item C<$self-E<gt>post_accept_hook()>
+
+This hook occurs in the child after the accept and fork.
 
 =item C<$self-E<gt>run_dequeue()>
 

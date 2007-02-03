@@ -2,9 +2,9 @@
 #
 #  Net::Server::INET - Net::Server personality
 #
-#  $Id: INET.pm,v 1.6 2005/06/20 18:48:50 rhandom Exp $
+#  $Id: INET.pm,v 1.7 2007/02/03 05:54:37 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com

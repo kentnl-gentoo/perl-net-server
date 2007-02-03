@@ -2,9 +2,9 @@
 #
 #  Net::Server::Single - Net::Server personality
 #
-#  $Id: Single.pm,v 1.3 2005/06/20 18:58:25 rhandom Exp $
+#  $Id: Single.pm,v 1.4 2007/02/03 05:55:40 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com

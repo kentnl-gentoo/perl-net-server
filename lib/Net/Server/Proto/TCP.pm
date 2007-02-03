@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #
-#  $Id: TCP.pm,v 1.11 2005/11/23 03:13:50 rhandom Exp $
+#  $Id: TCP.pm,v 1.12 2007/02/03 05:55:56 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com

@@ -2,15 +2,13 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #
-#  $Id: PreFork.pm,v 1.28 2006/07/12 02:46:30 rhandom Exp $
+#  $Id: PreFork.pm,v 1.34 2007/02/03 05:38:32 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com
 #    http://seamons.com/
-#
-#    Rob Brown bbb@cpan,org
 #
 #  This package may be distributed under the terms of either the
 #  GNU General Public License
@@ -157,14 +155,15 @@ sub kill_n_children {
 
   $self->log(3,"Killing \"$n\" children");
 
-  foreach (keys %{ $prop->{children} }){
-    next unless $prop->{children}->{$_}->{status} eq 'waiting';
+  foreach my $child (keys %{ $prop->{children} }){
+    next unless $prop->{children}->{$child}->{status} eq 'waiting';
 
-    $n --;
-    $prop->{tally}->{waiting} --;
+    $n--;
 
     ### try to kill the child
-    kill('HUP',$_) or $self->delete_child( $_ );
+    if (! kill('HUP', $child)) {
+      $self->delete_child($child);
+    }
 
     last if $n <= 0;
   }
@@ -307,7 +306,7 @@ sub run_parent {
                  while ( defined(my $chld = waitpid(-1, WNOHANG)) ){
                    last unless $chld > 0;
                    $prop->{tally}->{time} = 0 if $prop->{children}->{$chld}->{hup};
-                   $prop->{tally}->{$prop->{children}->{$chld}->{status}}--;
+                   $prop->{tally}->{$prop->{children}->{$chld}->{status}}-- if $prop->{children}->{$chld}->{status};
 		   $self->delete_child( $chld );
                  }
                },
@@ -352,17 +351,18 @@ sub run_parent {
         my ($pid,$status) = ($1,$2);
 
         ### record the status
-        $prop->{children}->{$pid}->{status} = $status;
+        $prop->{children}->{$pid}->{status} = $status
+          if $status ne 'exiting';
+
         if( $status eq 'processing' ){
           $prop->{tally}->{processing} ++;
-          $prop->{tally}->{waiting} --;
           $prop->{last_process} = time();
+
         }elsif( $status eq 'waiting' ){
           $prop->{tally}->{processing} --;
-          $prop->{tally}->{waiting} ++;
+
         }elsif( $status eq 'exiting' ){
-          $prop->{tally}->{processing} --;
-          $self->delete_child( $pid );
+          $self->delete_child($pid);
         }
 
       ### user defined handler
@@ -448,7 +448,6 @@ sub coordinate_children {
     foreach my $pid (keys %{ $prop->{children} }) {
       ### see if the child can be killed
       if (! kill(0, $pid)) {
-        $prop->{tally}->{ $prop->{children}->{$pid}->{status} } --;
         $self->delete_child($pid);
       }
     }
@@ -472,6 +471,24 @@ sub coordinate_children {
     }
   }
 
+}
+
+### delete_child and other modifications contributed by Rob Mueller
+sub delete_child {
+  my $self = shift;
+  my $prop = $self->{server};
+  my $pid = shift;
+
+  # Already gone?
+  return if ! exists $prop->{children}->{$pid};
+
+  my $status = $prop->{children}->{$pid}->{status}
+    || $self->log(2, "No status for $pid when deleting child\n");
+  --$prop->{tally}->{$status} >= 0
+    || $self->log(2, "Tally for $status < 0 deleting pid $pid\n");
+  $prop->{tally}->{time} = 0 if $prop->{children}->{$pid}->{hup};
+
+  $self->SUPER::delete_child($pid);
 }
 
 ### allow for other process to tie in to the parent read
@@ -674,7 +691,7 @@ will be the open socket to the child.
 
 =back
 
-=BUGS
+=head1 BUGS
 
 Tests don't seem to work on Win32.  Any ideas or patches would be welcome.
 

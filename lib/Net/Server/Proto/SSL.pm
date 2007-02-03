@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #
-#  $Id: SSL.pm,v 1.10 2005/11/23 03:39:26 rhandom Exp $
+#  $Id: SSL.pm,v 1.11 2007/02/03 05:56:34 rhandom Exp $
 #
-#  Copyright (C) 2001-2005
+#  Copyright (C) 2001-2007
 #
 #    Paul Seamons
 #    paul@seamons.com
