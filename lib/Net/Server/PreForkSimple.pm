@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #
-#  $Id: PreForkSimple.pm,v 1.26 2007/02/03 08:00:56 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.29 2007/03/26 14:32:05 rhandom Exp $
 #
 #  Copyright (C) 2001-2007
 #
@@ -96,8 +96,6 @@ sub post_bind {
       $prop->{lock_file} = POSIX::tmpnam();
       $prop->{lock_file_unlink} = 1;
     }
-    open($prop->{lock_fh}, ">$prop->{lock_file}")
-      || $self->fatal("Couldn't open lock file \"$prop->{lock_file}\"[$!]");
 
   ### set up semaphore
   }elsif( $prop->{serialize} eq 'semaphore' ){
@@ -200,6 +198,10 @@ sub run_child {
     }
     $prop->{SigHUPed} = 1;
   };
+
+  # Open in child at start
+  open($prop->{lock_fh}, ">$prop->{lock_file}")
+    || $self->fatal("Couldn't open lock file \"$prop->{lock_file}\"[$!]");
 
   $self->log(4,"Child Preforked ($$)\n");
 

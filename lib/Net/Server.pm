@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.105 2007/02/03 07:54:48 rhandom Exp $
+#  $Id: Server.pm,v 1.112 2007/03/23 18:39:48 rhandom Exp $
 #
 #  Copyright (C) 2001-2007
 #
@@ -30,13 +30,14 @@ use IO::Socket ();
 use IO::Select ();
 use POSIX ();
 use Fcntl ();
+use FileHandle;
 use Net::Server::Proto ();
 use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               get_uid get_gid set_uid set_gid
                               safe_fork
                               );
 
-$VERSION = '0.95';
+$VERSION = '0.96';
 
 ###----------------------------------------------------------------###
 
@@ -221,6 +222,12 @@ sub configure {
   ### do a config file
   if( defined $prop->{conf_file} ){
     $self->process_conf( $prop->{conf_file}, $template );
+  } else {
+    ### look for a default conf_file
+    my $def = $self->default_values || {};
+    if ($def->{conf_file}) {
+        $self->process_conf( $def->{conf_file}, $template );
+    }
   }
 
 }
@@ -245,34 +252,7 @@ sub post_configure {
   ### log to syslog
   }elsif( $prop->{log_file} eq 'Sys::Syslog' ){
 
-    my $logsock = defined($prop->{syslog_logsock})
-      ? $prop->{syslog_logsock} : 'unix';
-    $prop->{syslog_logsock} = ($logsock =~ /^(unix|inet|stream)$/)
-      ? $1 : 'unix';
-
-    my $ident = defined($prop->{syslog_ident})
-      ? $prop->{syslog_ident} : 'net_server';
-    $prop->{syslog_ident} = ($ident =~ /^([\ -~]+)$/)
-      ? $1 : 'net_server';
-
-    require Sys::Syslog;
-
-    my $opt = defined($prop->{syslog_logopt})
-      ? $prop->{syslog_logopt} : $Sys::Syslog::VERSION ge '0.15' ? 'pid,nofatal' : 'pid';
-    $prop->{syslog_logopt} = ($opt =~ /^((cons|ndelay|nowait|pid|nofatal)($|[,|]))*/)
-      ? $1 : 'pid';
-
-    my $fac = defined($prop->{syslog_facility})
-      ? $prop->{syslog_facility} : 'daemon';
-    $prop->{syslog_facility} = ($fac =~ /^((\w+)($|\|))*/)
-      ? $1 : 'daemon';
-
-    Sys::Syslog::setlogsock($prop->{syslog_logsock}) || die "Syslog err [$!]";
-    if( ! Sys::Syslog::openlog($prop->{syslog_ident},
-                               $prop->{syslog_logopt},
-                               $prop->{syslog_facility}) ){
-      die "Couldn't open syslog [$!]" if $prop->{syslog_logopt} ne 'ndelay';
-    }
+    $self->open_syslog;
 
   ### open a logging file
   }elsif( $prop->{log_file} && $prop->{log_file} ne 'Sys::Syslog' ){
@@ -1211,6 +1191,41 @@ sub fatal_hook {}
 
 ###----------------------------------------------------------###
 
+### handle opening syslog
+sub open_syslog {
+  my $self = shift;
+  my $prop = $self->{server};
+
+  my $logsock = defined($prop->{syslog_logsock})
+    ? $prop->{syslog_logsock} : 'unix';
+  $prop->{syslog_logsock} = ($logsock =~ /^(unix|inet|stream)$/)
+    ? $1 : 'unix';
+
+  my $ident = defined($prop->{syslog_ident})
+    ? $prop->{syslog_ident} : 'net_server';
+  $prop->{syslog_ident} = ($ident =~ /^([\ -~]+)$/)
+    ? $1 : 'net_server';
+
+  require Sys::Syslog;
+
+  my $opt = defined($prop->{syslog_logopt})
+    ? $prop->{syslog_logopt} : $Sys::Syslog::VERSION ge '0.15' ? 'pid,nofatal' : 'pid';
+  $prop->{syslog_logopt} = ($opt =~ /^( (?: (?:cons|ndelay|nowait|pid|nofatal) (?:$|[,|]) )* )/x)
+    ? $1 : 'pid';
+
+  my $fac = defined($prop->{syslog_facility})
+    ? $prop->{syslog_facility} : 'daemon';
+  $prop->{syslog_facility} = ($fac =~ /^((\w+)($|\|))*/)
+    ? $1 : 'daemon';
+
+  Sys::Syslog::setlogsock($prop->{syslog_logsock}) || die "Syslog err [$!]";
+  if( ! Sys::Syslog::openlog($prop->{syslog_ident},
+                             $prop->{syslog_logopt},
+                             $prop->{syslog_facility}) ){
+    die "Couldn't open syslog [$!]" if $prop->{syslog_logopt} ne 'ndelay';
+  }
+}
+
 ### how internal levels map to syslog levels
 $Net::Server::syslog_map = {0 => 'err',
                             1 => 'warning',
@@ -1232,11 +1247,20 @@ sub log {
         $level = $Net::Server::syslog_map->{$level} || $level;
     }
 
-    if (@therest) { # if more parameters are passed, we must assume that the first is a format string
-      Sys::Syslog::syslog($level, $msg, @therest);
-    } else {
-      Sys::Syslog::syslog($level, '%s', $msg);
+    my $ok = eval {
+      if (@therest) { # if more parameters are passed, we must assume that the first is a format string
+        Sys::Syslog::syslog($level, $msg, @therest);
+      } else {
+        Sys::Syslog::syslog($level, '%s', $msg);
+      }
+      1;
+    };
+
+    if (! $ok) {
+        my $err = $@;
+        $self->handle_syslog_error($err, [$level, $msg, @therest]);
     }
+
     return;
   } else {
     return if $level !~ /^\d+$/ || $level > $prop->{log_level};
@@ -1245,6 +1269,11 @@ sub log {
   $self->write_to_log_hook($level, $msg);
 }
 
+### allow catching syslog errors
+sub handle_syslog_error {
+  my ($self, $error) = @_;
+  die $error;
+}
 
 ### standard log routine, this could very easily be
 ### overridden with a syslog call
