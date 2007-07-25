@@ -414,7 +414,8 @@ base class.)
   log_file          (filename|Sys::Syslog)   undef
 
   ## syslog parameters
-  syslog_logsock    (unix|inet)              unix
+  syslog_logsock    (native|unix|inet|udp
+                     |tcp|stream|console)    unix (on Sys::Syslog < 0.15)
   syslog_ident      "identity"               "net_server"
   syslog_logopt     (cons|ndelay|nowait|pid) pid
   syslog_facility   \w+                      daemon
@@ -514,7 +515,11 @@ only to forking servers.  Default is none (undef).
 =item syslog_logsock
 
 Only available if C<log_file> is equal to "Sys::Syslog".  May
-be either "unix" of "inet".  Default is "unix".
+be either unix, inet, native, console, stream, udp, or tcp, or
+an arrayref of the types to try.  Default is "unix" if the version
+of Sys::Syslog < 0.15 - otherwise the default is to not call
+setlogsock.
+
 See L<Sys::Syslog>.
 
 =item syslog_ident
@@ -829,6 +834,8 @@ represents the program flow:
 
   $self->post_process_request;
 
+  $self->post_client_connection_hook;
+
 The process then loops and waits for the next
 connection.  For a more in depth discussion, please
 read the code.
@@ -1103,6 +1110,13 @@ C<$self-E<gt>allow_deny_hook()> have taken place.
 
 This hook occurs after the processing of the request, but
 before the client connection has been closed.
+
+=item C<$self-E<gt>post_client_connection_hook>
+
+This is one final hook that occurs at the very end of the
+run_client_connection method.  At this point all other methods
+and hooks that will run during the run_client_connection
+have finished and the client connection has already been closed.
 
 =item C<$self-E<gt>pre_server_close_hook()>
 
@@ -1415,6 +1429,12 @@ Thanks to Patrik Wallstrom for suggesting handling syslog errors better.
 
 Thanks again to Rob Mueller for more logic cleanup for child accounting in PreFork server.
 
+Thanks to David Schweikert for suggesting handling setlogsock a little better on newer
+versions of Sys::Syslog (>= 0.15).
+
+Thanks to Mihail Nasedkin for suggesting adding a hook that is now
+called post_client_connection_hook.
+
 =head1 SEE ALSO
 
 Please see also
@@ -1424,6 +1444,12 @@ L<Net::Server::PreForkSimple>,
 L<Net::Server::PreFork>,
 L<Net::Server::MultiType>,
 L<Net::Server::Single>
+
+=head1 TODO
+
+  Improve test suite to fully cover code (using Devel::Cover).  Anybody
+  that wanted to send me patches to the t/*.t tests that improved coverage
+  would earn a big thank you :) (Sorry there isn't a whole lot more than that to give).
 
 =head1 AUTHOR
 
