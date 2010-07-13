@@ -2,9 +2,9 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.114 2007/07/25 16:21:14 rhandom Exp $
+#  $Id: Server.pm,v 1.127 2010/07/09 14:55:31 rhandom Exp $
 #
-#  Copyright (C) 2001-2007
+#  Copyright (C) 2001-2010
 #
 #    Paul Seamons
 #    paul@seamons.com
@@ -37,7 +37,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.97';
+$VERSION = '0.99';
 
 ###----------------------------------------------------------------###
 
@@ -297,7 +297,7 @@ sub post_configure {
 
     ### completely remove myself from parent process - unless we are hup'ing
     if( $prop->{setsid} ){
-      &POSIX::setsid();
+      POSIX::setsid();
     }
   }
 
@@ -337,18 +337,18 @@ sub pre_bind {
   my $self = shift;
   my $prop = $self->{server};
 
-  my $ref   = ref($self);
-  no strict 'refs';
-  my $super = ${"${ref}::ISA"}[0];
-  use strict 'refs';
-  my $ns_type = (! $super || $ref eq $super) ? '' : " (type $super)";
-  $self->log(2,$self->log_time ." ". ref($self) .$ns_type. " starting! pid($$)");
+  my $super = do { no strict 'refs'; ${ref($self)."::ISA"}[0] };
+  $super = "$super -> MultiType -> $Net::Server::MultiType::ISA[0]" if $self->isa('Net::Server::MultiType');
+  $super = (! $super || ref($self) eq $super) ? '' : " (type $super)";
+  $self->log(2,$self->log_time ." ". ref($self) .$super. " starting! pid($$)");
 
   ### set a default port, host, and proto
   $prop->{port} = [$prop->{port}] if defined($prop->{port}) && ! ref($prop->{port});
   if (! defined($prop->{port}) || ! @{ $prop->{port} }) {
-    $self->log(2,"Port Not Defined.  Defaulting to '20203'\n");
-    $prop->{port}  = [ 20203 ];
+    my $port = ($self->can('default_port') && $self->default_port) || 20203;
+    $port = [$port] if ! ref $port;
+    $self->log(2,"Port Not Defined.  Defaulting to '@$port'\n");
+    $prop->{port}  = $port;
   }
 
   $prop->{host} = []              if ! defined $prop->{host};
@@ -376,7 +376,7 @@ sub pre_bind {
     my $port  = $prop->{port}->[$i];
     my $host  = $prop->{host}->[$i];
     my $proto = $prop->{proto}->[$i];
-    if ($bound{"$host/$port/$proto"}++) {
+    if ($port ne 0 && $bound{"$host/$port/$proto"}++) {
       $self->log(2, "Duplicate configuration (".(uc $proto)." port $port on host $host - skipping");
       next;
     }
@@ -387,8 +387,12 @@ sub pre_bind {
     $self->fatal("No valid socket parameters found");
   }
 
-  $prop->{listen} = Socket::SOMAXCONN()
-    unless defined($prop->{listen}) && $prop->{listen} =~ /^\d{1,3}$/;
+  if (! defined($prop->{listen}) || $prop->{listen} !~ /^\d+$/) {
+    my $max = Socket::SOMAXCONN();
+    $max = 128 if $max < 10; # some invalid Solaris contants ?
+    $prop->{listen} = $max;
+    $self->log(2, "Using default listen value of $max");
+  }
 
 }
 
@@ -703,17 +707,21 @@ sub post_accept {
 
   ### duplicate some handles and flush them
   ### maybe we should save these somewhere - maybe not
-  if( defined $prop->{client} ){
-    if( ! $prop->{no_client_stdout} ){
-      my $fileno= fileno $prop->{client};
+  if (defined(my $client = $prop->{client})) {
+    if (! $prop->{no_client_stdout}) {
       close STDIN;
       close STDOUT;
-      if( defined $fileno ){
+      if ($prop->{'tie_client_stdout'} || ($client->can('tie_stdout') && $client->tie_stdout)) {
+          open STDIN,  "<", "/dev/null" or die "Couldn't open STDIN to the client socket: $!";
+          open STDOUT, ">", "/dev/null" or die "Couldn't open STDOUT to the client socket: $!";
+          tie *STDOUT, 'Net::Server::TiedHandle', $client, $prop->{'tied_stdout_callback'} or die "Couldn't tie STDOUT: $!";
+          tie *STDIN,  'Net::Server::TiedHandle', $client, $prop->{'tied_stdin_callback'}  or die "Couldn't tie STDIN: $!";
+      } elsif (defined(my $fileno = fileno $prop->{client})) {
           open STDIN,  "<&$fileno" or die "Couldn't open STDIN to the client socket: $!";
           open STDOUT, ">&$fileno" or die "Couldn't open STDOUT to the client socket: $!";
       } else {
-          *STDIN= \*{ $prop->{client} };
-          *STDOUT= \*{ $prop->{client} } if ! $prop->{client}->isa('IO::Socket::SSL');
+          *STDIN  = \*{ $prop->{client} };
+          *STDOUT = \*{ $prop->{client} };
       }
       STDIN->autoflush(1);
       STDOUT->autoflush(1);
@@ -738,6 +746,12 @@ sub get_client_info {
                ." CONNECT UNIX Socket: \"$path\"\n");
 
     return;
+  } elsif ($self->isa('Net::Server::INET')) {
+    $prop->{sockaddr} = $ENV{'REMOTE_HOST'} || '0.0.0.0';
+    $prop->{peeraddr} = '0.0.0.0';
+    $prop->{sockhost} = $prop->{peerhost} = 'inetd.server';
+    $prop->{sockport} = $prop->{peerport} = 0;
+    return;
   }
 
   ### read information about this connection
@@ -749,7 +763,7 @@ sub get_client_info {
 
   }else{
     ### does this only happen from command line?
-    $prop->{sockaddr} = '0.0.0.0';
+    $prop->{sockaddr} = $ENV{'REMOTE_HOST'} || '0.0.0.0';
     $prop->{sockhost} = 'inet.test';
     $prop->{sockport} = 0;
   }
@@ -925,10 +939,12 @@ sub post_process_request {
     # close handles - but leave fd's around to prevent spurious messages (Rob Mueller)
     #close STDIN;
     #close STDOUT;
+    untie *STDOUT if tied *STDOUT;
+    untie *STDIN  if tied *STDIN;
     open(STDIN,  '</dev/null') || die "Can't read /dev/null  [$!]";
     open(STDOUT, '>/dev/null') || die "Can't write /dev/null [$!]";
   }
-  close($prop->{client});
+  $prop->{client}->close;
 
 }
 
@@ -972,8 +988,9 @@ sub dequeue {}
 sub pre_server_close_hook {}
 
 ### this happens when the server reaches the end
-sub server_close{
-  my $self = shift;
+sub server_close {
+  my $self     = shift;
+  my $exit_val = shift || 0;
   my $prop = $self->{server};
 
   $SIG{INT} = 'DEFAULT';
@@ -983,9 +1000,9 @@ sub server_close{
   ### otherwise the parent continues with the shutdown
   ### this is safe for non standard forked child processes
   ### as they will not have server_close as a handler
-  if (defined $prop->{ppid}
+  if (defined($prop->{ppid})
       && $prop->{ppid} != $$
-      && ! defined $prop->{no_close_by_child}) {
+      && ! defined($prop->{no_close_by_child})) {
     $self->close_parent;
     exit;
   }
@@ -995,7 +1012,7 @@ sub server_close{
 
   $self->log(2,$self->log_time . " Server closing!");
 
-  if (defined $prop->{_HUP} && $prop->{leave_children_open_on_hup}) {
+  if (defined($prop->{_HUP}) && $prop->{leave_children_open_on_hup}) {
       $self->hup_children;
 
   } else {
@@ -1009,14 +1026,15 @@ sub server_close{
   }
 
   ### remove files
-  if( defined $prop->{lock_file}
+  if( defined($prop->{lock_file})
       && -e $prop->{lock_file}
-      && defined $prop->{lock_file_unlink} ){
+      && defined($prop->{lock_file_unlink}) ){
     unlink($prop->{lock_file}) || $self->log(1, "Couldn't unlink \"$prop->{lock_file}\" [$!]");
   }
-  if( defined $prop->{pid_file}
+  if( defined($prop->{pid_file})
       && -e $prop->{pid_file}
-      && defined $prop->{pid_file_unlink} ){
+      && !defined($prop->{_HUP})
+      && defined($prop->{pid_file_unlink}) ){
     unlink($prop->{pid_file}) || $self->log(1, "Couldn't unlink \"$prop->{pid_file}\" [$!]");
   }
 
@@ -1032,11 +1050,15 @@ sub server_close{
   $self->shutdown_sockets;
 
   ### all done - exit
-  $self->server_exit;
+  $self->server_exit($exit_val);
 }
 
 ### called at end once the server has exited
-sub server_exit { exit }
+sub server_exit {
+  my $self = shift;
+  my $exit_val = shift || 0;
+  exit($exit_val);
+}
 
 ### allow for fully shutting down the bound sockets
 sub shutdown_sockets {
@@ -1184,7 +1206,7 @@ sub fatal {
   $self->log(0, $self->log_time ." ". $error
              ."\n  at line $line in file $file");
 
-  $self->server_close;
+  $self->server_close(1);
 }
 
 
@@ -1253,6 +1275,9 @@ sub log {
 
   return if ! $prop->{log_level};
 
+  # if multiple arguments are passed, assume that the first is a format string
+  $msg = sprintf($msg, @therest) if @therest;
+
   ### log only to syslog if setup to do syslog
   if (defined($prop->{log_file}) && $prop->{log_file} eq 'Sys::Syslog') {
     if ($level =~ /^\d+$/) {
@@ -1260,18 +1285,9 @@ sub log {
         $level = $Net::Server::syslog_map->{$level} || $level;
     }
 
-    my $ok = eval {
-      if (@therest) { # if more parameters are passed, we must assume that the first is a format string
-        Sys::Syslog::syslog($level, $msg, @therest);
-      } else {
-        Sys::Syslog::syslog($level, '%s', $msg);
-      }
-      1;
-    };
-
-    if (! $ok) {
+    if (! eval { Sys::Syslog::syslog($level, '%s', $msg); 1 }) {
         my $err = $@;
-        $self->handle_syslog_error($err, [$level, $msg, @therest]);
+        $self->handle_syslog_error($err, [$level, $msg]);
     }
 
     return;
@@ -1340,7 +1356,7 @@ sub options {
                syslog_logsock syslog_ident
                syslog_logopt syslog_facility
                no_close_by_child
-               no_client_stdout
+               no_client_stdout tie_client_stdout tied_stdout_callback tied_stdin_callback
                leave_children_open_on_hup
                ) ){
     $ref->{$_} = \$prop->{$_};
@@ -1379,7 +1395,7 @@ sub process_args {
           $val = 1; # allow for options such as --setsid
         } else {
           $val = splice( @$ref, $i, 1 );
-          if (ref $val) {
+          if (ref($val) && $key !~ /_callback$/) {
             die "Found an invalid configuration value for \"$key\" ($val)" if ref($val) ne 'ARRAY';
             $val = $val->[0] if @$val == 1;
           }
@@ -1399,7 +1415,7 @@ sub process_args {
           $previously_set{$key} = defined(${ $template->{$key} }) ? 1 : 0;
         }
         next if $previously_set{$key};
-        die "Found multiple values on the configuration item \"$key\" which expects only one value" if ref $val;
+        die "Found multiple values on the configuration item \"$key\" which expects only one value" if ref($val) && $key !~ /_callback$/;
         ${ $template->{$key} } = $val;
       }
     }
@@ -1441,6 +1457,9 @@ sub process_conf {
   $self->process_args( $self->{server}->{conf_file_args}, $template );
 }
 
+### User-customizable hook to handle child dying
+sub other_child_died_hook {}
+
 ### remove a child from the children hash. Not to be called by user.
 ### if UNIX sockets are in use the socket is removed from the select object.
 sub delete_child {
@@ -1449,7 +1468,10 @@ sub delete_child {
   my $prop = $self->{server};
 
   ### don't remove children that don't belong to me (Christian Mock, Luca Filipozzi)
-  return unless exists $prop->{children}->{$pid};
+  if (! exists $prop->{children}->{$pid}) {
+      $self->other_child_died_hook($pid);
+      return;
+  }
 
   ### prefork server check to clear child communication
   if( $prop->{child_communication} ){
@@ -1479,6 +1501,17 @@ sub set_property {
 }
 
 ###----------------------------------------------------------------###
+
+package Net::Server::TiedHandle;
+sub TIEHANDLE { my $pkg = shift; return bless [@_], $pkg }
+sub READLINE { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'getline',  @_) : $s->[0]->getline }
+sub SAY      { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'say',      @_) : $s->[0]->say(@_) }
+sub PRINT    { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'print',    @_) : $s->[0]->print(@_) }
+sub PRINTF   { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'printf',   @_) : $s->[0]->printf(@_) }
+sub READ     { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'read',     @_) : $s->[0]->read(@_) }
+sub WRITE    { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'write',    @_) : $s->[0]->write(@_) }
+sub SYSREAD  { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'sysread',  @_) : $s->[0]->sysread(@_) }
+sub SYSWRITE { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'syswrite', @_) : $s->[0]->syswrite(@_) }
 
 1;
 

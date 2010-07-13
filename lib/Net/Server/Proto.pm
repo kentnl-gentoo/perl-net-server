@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto - Net::Server Protocol compatibility layer
 #
-#  $Id: Proto.pm,v 1.8 2007/02/03 05:55:12 rhandom Exp $
+#  $Id: Proto.pm,v 1.10 2010/05/05 04:13:22 rhandom Exp $
 #
 #  Copyright (C) 2001-2007
 #
@@ -145,12 +145,13 @@ IO::Socket style objects blessed into its own set of classes
 (ie Net::Server::Proto::TCP, Net::Server::Proto::UNIX).
 
 Only three or four protocols come bundled with Net::Server.
-TCP, UDP, UNIX, and eventually SSL.  TCP is an implementation
+TCP, UDP, UNIX, and SSLEAY.  TCP is an implementation
 of SOCK_STREAM across an INET socket.  UDP is an implementation
 of SOCK_DGRAM across an INET socket.  UNIX uses a unix style
 socket file and lets the user choose between SOCK_STREAM and
-SOCK_DGRAM (the default is SOCK_STREAM).  SSL is actually just
-a layer on top of TCP.
+SOCK_DGRAM (the default is SOCK_STREAM).  SSLEAY is actually just
+a layer on top of TCP but uses Net::SSLeay to read and write from
+the stream..
 
 The protocol that is passed to Net::Server can be the name of
 another module which contains the protocol bindings.  If
@@ -343,6 +344,18 @@ at the following examples:
   # NS_unix_path = /tmp/mysock.file
   # NS_unix_type = SOCK_DGRAM
   # NS_proto = UNIX
+
+  # example 9 ###################################
+
+  $port = "someother.com:20203/ssleay";
+  $def_host  = "default_domain.com";
+  $def_proto = "tcp";
+  $obj = Net::Server::Proto->object($def_host,$port,$def_proto);
+
+  # ref      = Net::Server::Proto::SSLEAY
+  # NS_host  = someother.com
+  # NS_port  = 20203
+  # NS_proto = SSLEAY
 
 =head1 LICENCE
 

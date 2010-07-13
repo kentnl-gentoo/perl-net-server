@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #
-#  $Id: TCP.pm,v 1.12 2007/02/03 05:55:56 rhandom Exp $
+#  $Id: TCP.pm,v 1.15 2010/05/05 04:41:08 rhandom Exp $
 #
 #  Copyright (C) 2001-2007
 #
@@ -88,6 +88,11 @@ sub connect {
   $sock->SUPER::configure(\%args)
     or $server->fatal("Can't connect to TCP port $port on $host [$!]");
 
+  if ($port == 0 && ($port = $sock->sockport)) {
+    $sock->NS_port($port);
+    $server->log(2,"Bound to auto-assigned port $port");
+  }
+
   $server->fatal("Back sock [$!]!".caller())
     unless $sock;
 
@@ -116,6 +121,30 @@ sub accept {
 
   return $client;
 }
+
+
+###----------------------------------------------------------------###
+
+sub read_until { # only sips the data - but it allows for compatibility with SSLEAY
+    my ($client, $bytes, $end_qr) = @_;
+    die "One of bytes or end_qr should be defined for TCP read_until\n" if !defined($bytes) && !defined($end_qr);
+    my $content = '';
+    my $ok = 0;
+    while (1) {
+        $client->read($content, 1, length($content));
+        if (defined($bytes) && length($content) >= $bytes) {
+            $ok = 2;
+            last;
+        }
+        elsif (defined($end_qr) && $content =~ $end_qr) {
+            $ok = 1;
+            last;
+        }
+    }
+    return wantarray ? ($ok, $content) : $content;
+}
+
+###----------------------------------------------------------------###
 
 ### a string containing any information necessary for restarting the server
 ### via a -HUP signal

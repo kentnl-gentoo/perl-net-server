@@ -29,7 +29,9 @@ Net::Server - Extensible, general Perl server engine
  * Forking Mode
  * Multiplexing Mode using a single process
  * Multi port accepts on Single, Preforking, and Forking modes
- * Simultaneous accept/recv on tcp, udp, and unix sockets
+ * Basic HTTP Daemon handler
+ * Simultaneous accept/recv on tcp, udp, and unix and ssl/tcp sockets
+ * Working SSL sockets
  * Safe signal handling in Fork/PreFork avoids perl signal trouble
  * User customizable hooks
  * Chroot ability after bind
@@ -175,6 +177,13 @@ discussion of serialization see L<Net::Server::PreFork>.
 All methods fall back to Net::Server.  This personality is
 provided only as parallelism for Net::Server::MultiType.
 
+=item HTTP
+
+Not a distinct personality.  Provides a basic HTTP daemon.
+This can be combined with the SSLEAY proto to provide an
+HTTPS Daemon.
+See L<Net::Server::HTTP>.
+
 =back
 
 C<Net::Server> was partially written to make it easy to add
@@ -275,7 +284,7 @@ C<--key=value>, and also C<key=value>.  In the conf file the
 parameter passing can best be shown by the following regular
 expression: ($key,$val)=~/^(\w+)\s+(\S+?)\s+$/.  Passing
 arguments to the run method is done as follows:
-C<Net::Server->run(key1 => 'val1')>.  Passing arguments via
+C<<Net::Server-E<gt>run(key1 => 'val1')>>.  Passing arguments via
 a prebuilt object can best be shown in the following code:
 
     #!/usr/bin/perl -w -T
@@ -441,7 +450,7 @@ base class.)
 
   no_close_by_child (1|undef)                undef
 
-  ## See Net::Server::Proto::(TCP|UDP|UNIX|etc)
+  ## See Net::Server::Proto::(TCP|UDP|UNIX|SSLeay|etc)
   ## for more sample parameters.
 
 =over 4
@@ -562,6 +571,13 @@ default to "*".  Default port is 20203.  Configuration passed
 to new or run may be either a scalar containing a single port
 number or an arrayref of ports.
 
+On systems that support it, a port value of 0 may be used to ask
+the OS to auto-assign a port.  The value of the auto-assigned port
+will be stored in the NS_port property of the Net::Server::Proto::TCP
+object and is also available in the sockport method.  When the server
+is processing a request, the $self->{server}->{sockport} property
+contains the port that was connected through.
+
 =item host
 
 Local host or addr upon which to bind port.  If a value of '*' is
@@ -681,6 +697,28 @@ fork servers.  The new parent will attempt to keep track of the children from
 the former parent but custom communication channels (open pipes from the child
 to the old parent) will no longer be available to the old child processes.  New
 child processes will still connect properly to the new parent.
+
+=item tie_client_stdout
+
+Default undef.  If set will use Net::Server::TiedHandle tied interface for
+STDIN and STDOUT.  This interface allows SSLEAY to work.  It also allows
+for intercepting read and write via the tied_stdin_callback and tied_stdout_callback.
+
+=item tied_stdin_callback
+
+Default undef.  Called during a read of STDIN data if tie_client_stdout has
+been set, or if the client handle's tie_stdout method returns true.  It is
+passed the client connection, the name of the method that would be called, and
+the arguments that are being passed.  The callback is then responsible for calling
+that method on the handle or for performing some other input operation.
+
+=item tied_stdout_callback
+
+Default undef.  Called during a write of data to STDOUT if tie_client_stdout has
+been set, or if the client handle's tie_stdout method returns true.  It is
+passed the client connection, the name of the method that would be called, and
+the arguments that are being passed.  The callback is then responsible for calling
+that method on the handle or for performing some other output operation.
 
 =back
 
@@ -956,11 +994,15 @@ This method takes care of cleaning up any remaining child processes,
 setting appropriate flags on sockets (for HUPing), closing up
 logging, and then closing open sockets.
 
+Can optionally be passed an exit value that will be passed to the server_exit call.
+
 =item C<$self-E<gt>server_exit>
 
 This method is called at the end of server_close.  It calls exit,
 but may be overridden to do other items.  At this point all services
 should be shut down.
+
+Can optionally be passed an exit value that will be passed to the exit call.
 
 =back
 
@@ -1117,6 +1159,15 @@ This is one final hook that occurs at the very end of the
 run_client_connection method.  At this point all other methods
 and hooks that will run during the run_client_connection
 have finished and the client connection has already been closed.
+
+item C<$self-E<gt>other_child_died_hook($pid)>
+
+Net::Server takes control of signal handling and child process
+cleanup; this makes it difficult to tell when a child process
+terminates if that child process was not started by Net::Server
+itself.  If Net::Server notices another child process dying that it
+did not start, it will fire this hook with the PID of the terminated
+process.
 
 =item C<$self-E<gt>pre_server_close_hook()>
 
@@ -1435,6 +1486,15 @@ versions of Sys::Syslog (>= 0.15).
 Thanks to Mihail Nasedkin for suggesting adding a hook that is now
 called post_client_connection_hook.
 
+Thanks to Graham Barr for adding the ability to set the check_for_spawn and min_child_ttl
+settings of the PreFork server.
+
+Thanks to Daniel Kahn Gillmor for adding the other_child_died_hook.
+
+Thanks to Dominic Humphries for helping not kill pid files on HUP.
+
+Thanks to Kristoffer Møllerhøj for fixing UDP on Multiplex.
+
 =head1 SEE ALSO
 
 Please see also
@@ -1444,6 +1504,7 @@ L<Net::Server::PreForkSimple>,
 L<Net::Server::PreFork>,
 L<Net::Server::MultiType>,
 L<Net::Server::Single>
+L<Net::Server::HTTP>
 
 =head1 TODO
 

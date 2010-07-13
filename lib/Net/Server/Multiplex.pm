@@ -2,9 +2,9 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.16 2007/02/03 05:54:50 rhandom Exp $
+#  $Id: Multiplex.pm,v 1.17 2010/07/08 18:22:49 rhandom Exp $
 #
-#  Copyright (C) 2001-2007
+#  Copyright (C) 2001-2010
 #
 #    Rob Brown bbb@cpan,org
 #
@@ -16,8 +16,6 @@
 #  GNU General Public License
 #    or the
 #  Perl Artistic License
-#
-#  All rights reserved.
 #
 ################################################################
 
@@ -42,7 +40,11 @@ sub loop {
   $self->{mux} = $mux;
 
   foreach my $sock ( @{ $prop->{sock} } ) {
-    $mux->listen($sock);
+    if( Net::Server::SOCK_DGRAM == $sock->getsockopt(Socket::SOL_SOCKET(),Socket::SO_TYPE()) ){
+      $mux->add($sock);
+    } else {
+      $mux->listen($sock);
+    }
   }
   $mux->set_callback_object(Net::Server::Multiplex::MUX->init($self));
 

@@ -1,5 +1,27 @@
 Revision history for Perl extension Net::Server.
 
+0.99   July 13 2010
+        - Add customizable  check_for_spawn and min_child_ttl settings in PreFork (Graham Barr)
+        - Add other_child_died_hook (Daniel Kahn Gillmor)
+        - Make Multiplex do $mux->add($sock) for UDP sockets (Kristoffer Møllerhøj)
+        - Change Net::Server::Daemonize to use kill 0 rather than the unportable `ps`
+        - Fix calling conventions of MultiType
+        - Avoid select in SSLEAY that was allowing for infinite spin loop
+        - Fix tie_stdout mode to not warn about unopen handles.
+        - Added Net::Server::HTTP base class for basic HTTP daemon handling.
+        - Change examples/httpd to use Net::Server::HTTP
+
+0.98   May 05 2010
+        - Add SSLeay proto - finally a workable SSL solution.
+        - Add minimal Net::Server::TiedHandle to allow for STDIN and STDOUT to work with SSLEAY
+        - Net::Server::TiedHandle also support tied_stdin_callback and tied_stdout_callback
+       Feb 08 2008
+        - Allow for port => 0 which lets the OS auto assign a port on some OSes (Blackie Hlasek)
+        - Add idle_loop_hook to PreForkSimple and PreFork (David Zuhn)
+        - Add consistent formatting capabilities to the log method (whethere Syslog is used or not) (David Zuhn)
+        - Warn when default listen value is used - try to make it a sensible default (Mark Martinec)
+        - Allow for non-zero exit value - particularly when called from fatal (David Schweikert)
+
 0.97   Jul 25 2007
         - Allow for better handling of setlogsock depending upon the version of Sys::Syslog installed (David Schweikert)
         - Update examples with minimal pod and working synopses
