@@ -20,8 +20,27 @@ Net::Server - Extensible, general Perl server engine
 
     MyPackage->run(port => 160);
 
+=head1 DISCLAIMER
+
+This version of Net::Server (0.99.6.1) has been submitted by the munin
+maintainers (munin-monitoring.org) in order to enable ipv6 support in
+munin.  The version number (over 0.99) was chosen to imply IPv6
+support and that it was the first such version.
+
+The patches we used were found in Debians perl repository at
+http://packages.qa.debian.org/libn/libnet-server-perl.html and we've
+made no atempts to improve upon these.  We tested by patching
+Net::Server and then connecting to munin node with "telnet ::1 4949"
+which worked quite nicely thanks very much.  Many thanks to the Debian
+community for developing the patches.
+
+I/we are sorry, but cannot we be counted on to do any further
+development or support of Net::Server.  Whatever time we may or may
+not have will go into munin.
+
 =head1 FEATURES
 
+ * IPv6 support
  * Single Server Mode
  * Inetd Server Mode
  * Preforking Simple Mode (PreForkSimple)

@@ -1,5 +1,14 @@
 Revision history for Perl extension Net::Server.
 
+0.99.6.1 July 22 2011
+	- Add IPv6 support and a workaround for Net::CIDR so that IPv6 addresses are handled
+	  sanely. Patch by the Debian community.  It is hosted at
+          http://packages.qa.debian.org/libn/libnet-server-perl.html.
+	  Now requires IO::Socket::INET6 - this seems to be in widespread use already.
+          No tests added for IPv6 support, but the code was tested using munin-node
+          (munin-monitoring.org) and by multiple people in Debian.
+			- Nicolai Langfeldt (janl@langfeldt.net)
+
 0.99   July 13 2010
         - Add customizable  check_for_spawn and min_child_ttl settings in PreFork (Graham Barr)
         - Add other_child_died_hook (Daniel Kahn Gillmor)

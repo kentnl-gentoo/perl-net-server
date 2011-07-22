@@ -39,8 +39,12 @@ sub object {
   my $prop = $server->{server};
   my $host;
 
-  ### allow for things like "domain.com:80"
+  ### allow for things like "domain.com:80" (IPv4)
   if( $port =~ m/^([\w\.\-\*\/]+):(\w+)$/ ){
+    ($host,$port) = ($1,$2);
+
+  ### allow for things like "[::1]:80" (IPv6)
+  }elsif( $port =~ m/^\[([\:\w\.\-\*\/]+)\]:(\w+)$/ ){
     ($host,$port) = ($1,$2);
 
   ### allow for things like "80"

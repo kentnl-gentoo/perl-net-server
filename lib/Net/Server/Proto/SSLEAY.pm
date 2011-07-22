@@ -23,7 +23,7 @@ package Net::Server::Proto::SSLEAY;
 
 use strict;
 use vars qw($VERSION $AUTOLOAD @ISA);
-use IO::Socket::INET;
+use IO::Socket::INET6;
 use Fcntl ();
 use Errno ();
 use Socket ();
@@ -38,7 +38,7 @@ BEGIN {
 }
 
 $VERSION = $Net::Server::VERSION; # done until separated
-@ISA = qw(IO::Socket::INET);
+@ISA = qw(IO::Socket::INET6);
 
 sub object {
     my $type  = shift;
@@ -48,8 +48,11 @@ sub object {
     my $prop = $server->{'server'};
     my $host;
 
-    if ($port =~ m/^([\w\.\-\*\/]+):(\w+)$/) { # allow for things like "domain.com:80"
+    if ($port =~ m/^([\w\.\-\*\/]+):(\w+)$/) { # allow for things like "domain.com:80" (IPv4)
         ($host, $port) = ($1, $2);
+    }
+    elsif( $port =~ m/^\[([\:\w\.\-\*\/]+)\]:(\w+)$/ ){ # allow for things like "[::1]:80" (IPv6)
+        ($host,$port) = ($1,$2);
     }
     elsif ($port =~ /^(\w+)$/) { # allow for things like "80"
         ($host, $port) = ($default_host, $1);

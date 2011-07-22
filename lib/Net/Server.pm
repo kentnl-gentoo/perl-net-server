@@ -25,7 +25,8 @@ package Net::Server;
 
 use strict;
 use vars qw($VERSION);
-use Socket qw(inet_aton inet_ntoa AF_INET AF_UNIX SOCK_DGRAM SOCK_STREAM);
+use Socket qw(unpack_sockaddr_in sockaddr_family AF_INET AF_INET6 AF_UNIX SOCK_DGRAM SOCK_STREAM);
+use Socket6 qw(inet_ntop inet_pton unpack_sockaddr_in6);
 use IO::Socket ();
 use IO::Select ();
 use POSIX ();
@@ -37,7 +38,7 @@ use Net::Server::Daemonize qw(check_pid_file create_pid_file
                               safe_fork
                               );
 
-$VERSION = '0.99';
+$VERSION = '0.99.6.1';
 
 ###----------------------------------------------------------------###
 
@@ -356,7 +357,7 @@ sub pre_bind {
   push @{ $prop->{host} }, (($prop->{host}->[-1]) x (@{ $prop->{port} } - @{ $prop->{host}})); # augment hosts with as many as port
   foreach my $host (@{ $prop->{host} }) {
     $host = '*' if ! defined $host || ! length $host;;
-    $host = ($host =~ /^([\w\.\-\*\/]+)$/) ? $1 : $self->fatal("Unsecure host \"$host\"");
+    $host = ($host =~ /^([\[\]\:\w\.\-\*\/]+)$/) ? $1 : $self->fatal("Unsecure host \"$host\"");
   }
 
   $prop->{proto} = []               if ! defined $prop->{proto};
@@ -757,12 +758,14 @@ sub get_client_info {
   ### read information about this connection
   my $sockname = getsockname( $sock );
   if( $sockname ){
+    $prop->{sockfamily} = sockaddr_family( $sockname );
     ($prop->{sockport}, $prop->{sockaddr})
-      = Socket::unpack_sockaddr_in( $sockname );
-    $prop->{sockaddr} = inet_ntoa( $prop->{sockaddr} );
+      = ($prop->{sockfamily} == AF_INET6) ? unpack_sockaddr_in6( $sockname ) : unpack_sockaddr_in( $sockname );
+    $prop->{sockaddr} = inet_ntop( $prop->{sockfamily}, $prop->{sockaddr} );
 
   }else{
     ### does this only happen from command line?
+    $prop->{sockfamily} = AF_INET;
     $prop->{sockaddr} = $ENV{'REMOTE_HOST'} || '0.0.0.0';
     $prop->{sockhost} = 'inet.test';
     $prop->{sockport} = 0;
@@ -773,17 +776,17 @@ sub get_client_info {
   if( $prop->{udp_true} ){
     $proto_type = 'UDP';
     ($prop->{peerport} ,$prop->{peeraddr})
-      = Socket::sockaddr_in( $prop->{udp_peer} );
+      = ($prop->{sockfamily} == AF_INET6) ? unpack_sockaddr_in6( $prop->{udp_peer} ) : unpack_sockaddr_in( $prop->{udp_peer} );
   }elsif( $prop->{peername} = getpeername( $sock ) ){
     ($prop->{peerport}, $prop->{peeraddr})
-      = Socket::unpack_sockaddr_in( $prop->{peername} );
+      = ($prop->{sockfamily} == AF_INET6) ? unpack_sockaddr_in6( $prop->{peername} ) : unpack_sockaddr_in( $prop->{peername} );
   }
 
   if( $prop->{peername} || $prop->{udp_true} ){
-    $prop->{peeraddr} = inet_ntoa( $prop->{peeraddr} );
+    $prop->{peeraddr} = inet_ntop( $prop->{sockfamily}, $prop->{peeraddr} );
 
     if( defined $prop->{reverse_lookups} ){
-      $prop->{peerhost} = gethostbyaddr( inet_aton($prop->{peeraddr}), AF_INET );
+      $prop->{peerhost} = gethostbyaddr( inet_pton($prop->{sockfamily}, $prop->{peeraddr}), $prop->{sockfamily} );
     }
     $prop->{peerhost} = '' unless defined $prop->{peerhost};
 
@@ -803,7 +806,6 @@ sub get_client_info {
 ### user customizable hook
 sub post_accept_hook {}
 
-
 ### perform basic allow/deny service
 sub allow_deny {
   my $self = shift;
@@ -822,25 +824,29 @@ sub allow_deny {
     && $#{ $prop->{cidr_allow} } == -1
     && $#{ $prop->{cidr_deny} }  == -1;
 
+  ### work around Net::CIDR::cidrlookup() croaking,
+  ### if first parameter is an IPv4 address in IPv6 notation.
+  my $peeraddr = ($prop->{peeraddr} =~ /^\s*::ffff:([0-9.]+\s*)$/) ? $1 : $prop->{peeraddr};
+
   ### if the addr or host matches a deny, reject it immediately
   foreach ( @{ $prop->{deny} } ){
     return 0 if $prop->{peerhost} =~ /^$_$/ && defined($prop->{reverse_lookups});
-    return 0 if $prop->{peeraddr} =~ /^$_$/;
+    return 0 if $peeraddr =~ /^$_$/;
   }
   if ($#{ $prop->{cidr_deny} } != -1) {
     require Net::CIDR;
-    return 0 if Net::CIDR::cidrlookup($prop->{peeraddr}, @{ $prop->{cidr_deny} });
+    return 0 if Net::CIDR::cidrlookup($peeraddr, @{ $prop->{cidr_deny} });
   }
 
 
   ### if the addr or host isn't blocked yet, allow it if it is allowed
   foreach ( @{ $prop->{allow} } ){
     return 1 if $prop->{peerhost} =~ /^$_$/ && defined($prop->{reverse_lookups});
-    return 1 if $prop->{peeraddr} =~ /^$_$/;
+    return 1 if $peeraddr =~ /^$_$/;
   }
   if ($#{ $prop->{cidr_allow} } != -1) {
     require Net::CIDR;
-    return 1 if Net::CIDR::cidrlookup($prop->{peeraddr}, @{ $prop->{cidr_allow} });
+    return 1 if Net::CIDR::cidrlookup($peeraddr, @{ $prop->{cidr_allow} });
   }
 
   return 0;
@@ -1145,7 +1151,7 @@ sub sig_hup {
       or $self->fatal("Can't dup socket [$!]");
 
     ### hold on to the socket copy until exec
-    $prop->{_HUP}->[$i] = IO::Socket::INET->new;
+    $prop->{_HUP}->[$i] = IO::Socket::INET6->new();
     $prop->{_HUP}->[$i]->fdopen($fd, 'w')
       or $self->fatal("Can't open to file descriptor [$!]");
 

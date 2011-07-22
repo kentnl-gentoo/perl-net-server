@@ -23,10 +23,10 @@ package Net::Server::Proto::TCP;
 
 use strict;
 use vars qw($VERSION $AUTOLOAD @ISA);
-use IO::Socket ();
+use IO::Socket::INET6 ();
 
 $VERSION = $Net::Server::VERSION; # done until separated
-@ISA = qw(IO::Socket::INET);
+@ISA = qw(IO::Socket::INET6);
 
 sub object {
   my $type  = shift;
@@ -35,8 +35,12 @@ sub object {
   my ($default_host,$port,$server) = @_;
   my $host;
 
-  ### allow for things like "domain.com:80"
+  ### allow for things like "domain.com:80" (IPv4)
   if( $port =~ m/^([\w\.\-\*\/]+):(\w+)$/ ){
+    ($host,$port) = ($1,$2);
+
+  ### allow for things like "[::1]:80" (IPv6)
+  }elsif( $port =~ m/^\[([\:\w\.\-\*\/]+)\]:(\w+)$/ ){
     ($host,$port) = ($1,$2);
 
   ### allow for things like "80"
