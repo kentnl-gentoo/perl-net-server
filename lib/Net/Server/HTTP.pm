@@ -2,7 +2,7 @@
 #
 #  Net::Server::HTTP - Extensible Perl HTTP base server
 #
-#  $Id: HTTP.pm,v 1.17 2012/05/30 13:37:20 rhandom Exp $
+#  $Id: HTTP.pm,v 1.19 2012/05/30 21:46:09 rhandom Exp $
 #
 #  Copyright (C) 2010-2012
 #
@@ -188,12 +188,13 @@ sub process_headers {
     foreach my $l (@lines) {
         my ($key, $val) = split /\s*:\s*/, $l, 2;
         $key = uc($key);
+        $key = 'COOKIE' if $key eq 'COOKIES';
         $key =~ y/-/_/;
         $key =~ s/^\s+//;
         $key = "HTTP_$key" if $key !~ /^CONTENT_(?:LENGTH|TYPE)$/;
         $val =~ s/\s+$//;
         if (exists $ENV{$key}) {
-            $ENV{$key} .= $val;
+            $ENV{$key} .= ", $val";
         } else {
             $ENV{$key} = $val;
         }

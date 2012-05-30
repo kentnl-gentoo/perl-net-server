@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #
-#  $Id: PreForkSimple.pm,v 1.38 2012/05/30 15:08:18 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.39 2012/05/30 21:43:39 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -77,7 +77,7 @@ sub post_bind {
         if (defined $prop->{'lock_file'}) {
             $prop->{'lock_file_unlink'} = undef;
         } else {
-            $prop->{'lock_file'} = eval { require File::Temp } ? File::Temp::tempfile() : POSIX::tmpnam();
+            $prop->{'lock_file'} = eval { require File::Temp } ? File::Temp::tmpnam() : POSIX::tmpnam();
             $prop->{'lock_file_unlink'} = 1;
         }
 
