@@ -8,21 +8,16 @@ Port_Configuration.t - Test different ways of specifying the port
 
 package FooServer;
 
-use vars qw(@ISA);
 use strict;
-use Test::More tests => 78;
+use FindBin qw($Bin);
+use lib $Bin;
+use NetServerTest qw(prepare_test ok is use_ok diag skip);
+prepare_test({n_tests => 48, plan_only => 1});
 #use CGI::Ex::Dump qw(debug);
 
 use_ok('Net::Server');
 
-@ISA = qw(Net::Server);
-
-#sub proto_object {
-#    my ($self, $host, $port, $proto) = @_;
-#    #debug $host, $port, $proto;
-#    #return $self->SUPER::proto_object($host, $port, $proto);
-#    return "Blah";
-#}
+@FooServer::ISA = qw(Net::Server);
 
 ### override these to make run not run
 ### this will allow all configuration cycles to be run
@@ -34,152 +29,367 @@ sub server_close {
     my $self = shift;
     return $self;
 }
+sub fatal {
+    my ($self, $msg) = @_;
+    die $msg;
+}
+sub SSL_cert_file { 'somecert' }
+
+my $dump; # poormans dumper - concise but not full bore
+$dump = sub {
+    my $ref = shift;
+    my $ind = shift || '';
+    return (!defined $ref) ? 'undef' : ($ref eq '0') ? 0 : ($ref=~/^[1-9]\d{0,12}$/) ? $ref : "'$ref'" if ! ref $ref;
+    return "[".join(', ',map {$dump->($_)} @$ref).']' if ref $ref eq 'ARRAY';
+    return "{".join(',',map {"\n$ind  $_ => ".$dump->($ref->{$_},"$ind  ")} sort keys %$ref)."\n$ind}";
+};
+
+sub p_c { # port check
+    my ($pkg, $file, $line) = caller;
+    my ($args, $hash, $args_to_new) = @_;
+    my $prop = eval { ($args_to_new ? FooServer->new(@$args)->run : FooServer->run(@$args))->{'server'} }
+        || do { diag "$@ at line $line"; {} };
+#    use CGI::Ex::Dump qw(debug);
+#    debug $prop;
+    my $got = {bind => $prop->{'_bind'}};
+    if ($hash->{'sock'}) {
+        push @{ $got->{'sock'} }, NS_props($_) for @{ $prop->{'sock'} || [] };
+    }
+    my $result = $dump->($got);
+    my $test   = $dump->($hash);
+    (my $str = $dump->({ref($args->[0]) eq 'HASH' ? %{$args->[0]} : @$args})) =~ s/\s*\n\s*/ /g;
+    $str =~ s/^\{/(/ && $str =~ s/\}$/)/ if ref($args->[0]) ne 'HASH';
+    $str .= "  ==>  [ '".join("', '", map {$_->hup_string} @{ $prop->{'sock'} || [] })."' ]";
+    $str = ($args_to_new ? 'new' : 'run')." $str";
+    if ($result eq $test && $str !~ /\|\|/) {
+        ok(1, "$str");
+    } else {
+        diag "Failed at line $line";
+        is($result, $test, "$str");
+        exit;
+    }
+}
+
+my %class_m;
+sub NS_props {
+    no strict 'refs';
+    my $sock = shift || return {};
+    my $pkg  = ref($sock);
+    my $m = $class_m{$pkg} ||= {map {$_ => 1} qw(NS_port NS_host NS_proto NS_ipv), grep {/^(?:SSL|NS)_\w+$/ && defined(&{"${pkg}::$_"})} keys %{"${pkg}::"}};
+    return {map {$_ => $sock->$_()} keys %$m};
+}
 
 ###----------------------------------------------------------------###
+# tcp, udp
 
-my $obj = eval { FooServer->new };
-ok($obj, "Got an object ($@)");
+p_c([], {
+    bind => [{
+        host => '*',
+        port => Net::Server::default_port(),
+        ipv  => '4',
+        proto => 'tcp',
+    }],
+    sock => [{
+        NS_host => '*',
+        NS_port => Net::Server::default_port(),
+        NS_ipv  => '4',
+        NS_proto => 'TCP',
+        NS_listen => eval { Socket::SOMAXCONN() },
+    }],
+});
 
-my $server = eval { FooServer->run };
-ok($server, "Got a server ($@)");
-my $prop = eval { $server->{'server'} } || {};
-ok($prop->{'log_level'} == 2,  "Correct default log_level");
-ok($prop->{'log_file'}  eq "", "Correct default log_file");
-ok(! $prop->{'user'},          "Correct default user");
-ok(! $prop->{'group'},         "Correct default group");
-ok(@{ $prop->{'port'} } == 1,         "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,         "Had 1 configured socket");
-my $sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq '*' },   "Right host");
-ok(eval { $sock->NS_port  == 20203 }, "Right port");
-ok(eval { $sock->NS_proto eq 'TCP' }, "Right proto");
+p_c([port => 20201], {
+    bind => [{host => '*', port => 20201, proto => 'tcp', ipv => '4'}],
+});
+
+
+p_c([port => "localhost:20202"], {
+    bind => [{host => 'localhost', port => 20202, proto => 'tcp', ipv => '4'}],
+});
+
+p_c([port => ["localhost:20202/tcp"]], {
+    bind => [{host => 'localhost', port => 20202, proto => 'tcp', ipv => '4'}],
+});
+
+p_c([port => "localhost:20202/ipv4"], {
+    bind => [{host => 'localhost', port => 20202, proto => 'tcp', ipv => '4'}],
+});
+
+p_c([port => ["localhost:20201/ipv4/tcp", "localhost:20202/tcp/IPv4"]], {
+    bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => '4'}, {host => 'localhost', port => 20202, proto => 'tcp', ipv => '4'}],
+});
+
+p_c([port => ["localhost|20201|ipv4|tcp", "localhost,20202,tcp,IPv4"]], {
+    bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => '4'}, {host => 'localhost', port => 20202, proto => 'tcp', ipv => '4'}],
+});
+
+p_c([port => ["localhost 20201 ipv4 tcp", "localhost, 20202, tcp, IPv4"]], {
+    bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => '4'}, {host => 'localhost', port => 20202, proto => 'tcp', ipv => '4'}],
+});
+
+p_c([port => "localhost:20202/udp"], {
+    bind => [{host => 'localhost', port => 20202, proto => 'udp', ipv => '4'}],
+    sock => [{
+        NS_broadcast => undef,
+        NS_host => 'localhost',
+        NS_port => 20202,
+        NS_ipv  => '4',
+        NS_proto => 'UDP',
+        NS_recv_flags => 0,
+        NS_recv_len => 4096,
+    }],
+});
+
+p_c([port => 20202, listen => 5], {
+    bind => [{host => '*', port => 20202, proto => 'tcp', ipv => '4'}],
+    sock => [{
+        NS_host => '*',
+        NS_port => 20202,
+        NS_proto => 'TCP',
+        NS_listen => 5,
+        NS_ipv => '4',
+    }],
+});
+
+
+
+p_c([port => ["bar.com:20201/udp", "foo.com:20202/tcp"]], {bind => [
+   {host => 'bar.com', port => 20201, proto => 'udp', ipv => '4'},
+   {host => 'foo.com', port => 20202, proto => 'tcp', ipv => '4'},
+]});
+
+
+p_c([port => 20201, host => 'bar.com', proto => 'UDP'], {
+    bind => [{host => 'bar.com', port => 20201, proto => 'UDP', ipv => '4'}],
+});
+
+
+p_c([{port => 20201, host => 'bar.com', proto => 'UDP', udp_recv_len => 400}], {
+    bind => [{host => 'bar.com', port => 20201, proto => 'UDP', ipv => '4'}],
+    sock => [{NS_host => 'bar.com', NS_port => 20201, NS_proto => 'UDP', NS_ipv => '4', NS_recv_len => 400, NS_recv_flags => 0, NS_broadcast => undef}],
+});
+
+
+p_c([port => 20201, host => 'bar.com', proto => 'UDP'], {
+    bind => [{host => 'bar.com', port => 20201, proto => 'UDP', ipv => 4}],
+}, 'new');
+
+
+p_c([{port => 20201, host => 'bar.com', proto => 'UDP'}], {
+    bind => [{host => 'bar.com', port => 20201, proto => 'UDP', ipv => 4}],
+}, 'new');
+
+
+p_c([port => [20201, "foo.com:20202/tcp"], host => 'bar.com', proto => 'UDP'], {bind => [
+   {host => 'bar.com', port => 20201, proto => 'UDP', ipv => 4},
+   {host => 'foo.com', port => 20202, proto => 'tcp', ipv => 4},
+]});
+
+
+p_c([port => ["localhost|20202|tcp"]], {
+    bind => [{host => 'localhost', port => 20202, proto => 'tcp', ipv => 4}],
+});
+
+
+p_c([port => ["localhost,20202,tcp"]], {
+    bind => [{host => 'localhost', port => 20202, proto => 'tcp', ipv => 4}],
+});
+
+
+p_c([port => ["[localhost]:20202/tcp"]], {
+    bind => [{host => 'localhost', port => 20202, proto => 'tcp', ipv => 4}],
+});
+
+p_c([port => ["localhost,20202,Net::Server::Proto::TCP"]], {
+    bind => [{host => 'localhost', port => 20202, proto => 'Net::Server::Proto::TCP', ipv => 4}],
+});
+
+
+p_c([port => {port => 20201}], {
+    bind => [{host => '*', port => 20201, proto => 'tcp', ipv => 4}],
+});
+
+p_c([port => [{port => 20201}]], {
+    bind => [{host => '*', port => 20201, proto => 'tcp', ipv => 4}],
+});
+
+
+p_c([port => [{port => 20201, host => 'foo.com', proto => 'udp'}]], {
+    bind => [{host => 'foo.com', port => 20201, proto => 'udp', ipv => 4}],
+});
+
+
+p_c([port => [{port => 20201}], host => 'foo.com', proto => 'udp'], {
+    bind => [{host => 'foo.com', port => 20201, proto => 'udp', ipv => 4}],
+});
+
+p_c([port => [{port => 20202, listen => 6}]], {
+    bind => [{host => '*', port => 20202, proto => 'tcp', listen => 6, ipv => 4}],
+    sock => [{
+        NS_host => '*',
+        NS_port => 20202,
+        NS_proto => 'TCP',
+        NS_listen => 6,
+        NS_ipv => 4,
+    }],
+});
 
 ###----------------------------------------------------------------###
+# unix, unixdgram
 
-$prop = eval { FooServer->run(port => 2201)->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq '*' },     "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'TCP' },   "Right proto");
+if (!eval { require IO::Socket::UNIX }) {
+    my $err = $@;
+  SKIP: {
+      skip "Cannot load IO::Socket::UNIX - skipping UNIX proto tests", 7;
+    };
+} else {
+    p_c([port => 'foo/bar/unix'], {
+        bind => [{host => '*', port => 'foo/bar', proto => 'unix', ipv => 4}],
+    });
+
+    p_c([port => '/foo/bar|unix', udp_recv_len => 500], {
+        bind => [{host => '*', port => '/foo/bar', proto => 'unix', ipv => 4}],
+        sock => [{NS_host => '*', NS_port => '/foo/bar', NS_proto => 'UNIX', NS_ipv => '*', NS_listen => Socket::SOMAXCONN(), NS_unix_type => 'SOCK_STREAM'}],
+    });
+
+    p_c([port => '/foo/bar|unixdgram', udp_recv_len => 500], {
+        bind => [{host => '*', port => '/foo/bar', proto => 'unixdgram', ipv => 4}],
+        sock => [{NS_host => '*', NS_port => '/foo/bar', NS_proto => 'UNIXDGRAM', NS_recv_len => 500, NS_recv_flags => 0, NS_unix_type => 'SOCK_DGRAM', NS_ipv => '*'}],
+    });
+
+    p_c([port => 'foo/bar|sock_dgram|unix'], {
+        bind => [{host => '*', port => 'foo/bar', proto => 'unix', unix_type => 'sock_dgram', ipv => 4}],
+    });
+
+    p_c([port => {port => '/foo/bar', proto => 'unix', unix_type => 'sock_stream', listen => 7}], {
+        bind => [{host => '*', port => '/foo/bar', proto => 'unix', unix_type => 'sock_stream', listen => 7, ipv => 4}],
+        sock => [{NS_host => '*', NS_port => '/foo/bar', NS_proto => 'UNIX', NS_unix_type => 'SOCK_STREAM', NS_listen => 7, NS_ipv => '*'}],
+    });
+
+    p_c([port => {port => '/foo/bar', proto => 'unix', unix_type => 'sock_dgram'}], {
+        bind => [{host => '*', port => '/foo/bar', proto => 'unix', unix_type => 'sock_dgram', ipv => 4}],
+    });
+
+    p_c([port => {port => '/foo/bar', proto => 'unixdgram'}], {
+        bind => [{host => '*', port => '/foo/bar', proto => 'unixdgram', ipv => 4}],
+    });
+
+}
+
+###----------------------------------------------------------------###
+# ssl
+
+if (!eval { require Net::SSLeay; 1 }) {
+    my $err = $@;
+  SKIP: {
+      skip "Cannot load Net::SSLeay - skipping SSLEAY proto tests", 3;
+    };
+} else {
+
+    p_c([proto => 'ssleay'], {
+        bind => [{host => '*', port => Net::Server::default_port(), proto => 'ssleay', ipv => 4}],
+        sock => [{NS_host => '*', NS_port => 20203, NS_proto => 'SSLEAY', NS_ipv => 4, NS_listen => eval { Socket::SOMAXCONN() }, SSL_cert_file => FooServer::SSL_cert_file()}],
+    });
+
+    %class_m = (); # setting SSL_key_file may dynamically change the package methods
+    p_c([port => '20203/ssleay', listen => 4, SSL_key_file => "foo/bar"], {
+        bind => [{host => '*', port => 20203, proto => 'ssleay', ipv => 4}],
+        sock => [{NS_host => '*', NS_port => 20203, NS_proto => 'SSLEAY', NS_ipv => 4, NS_listen => 4, SSL_key_file => "foo/bar", SSL_cert_file => FooServer::SSL_cert_file()}],
+    });
+
+    %class_m = (); # setting SSL_key_file may dynamically change the package methods
+    p_c([port => {port => '20203', proto => 'ssleay', listen => 6, SSL_key_file => "foo/bar"}], {
+        bind => [{host => '*', port => 20203, proto => 'ssleay', listen => 6, SSL_key_file => "foo/bar", ipv => 4}],
+        sock => [{NS_host => '*', NS_port => 20203, NS_proto => 'SSLEAY', NS_ipv => 4, NS_listen => 6, SSL_key_file => "foo/bar", SSL_cert_file => FooServer::SSL_cert_file()}],
+    });
+
+}
+
+if (!eval { require IO::Socket::SSL }) {
+  SKIP: {
+      skip "Cannot load Net::SSLeay - skipping SSLEAY proto tests", 1;
+    };
+} else {
+    p_c([proto => 'ssl'], {
+        bind => [{host => '*', port => Net::Server::default_port(), proto => 'ssl', ipv => 4}],
+        sock => [{NS_host => '*', NS_port => 20203, NS_proto => 'SSL', NS_ipv => 4, NS_listen => eval { Socket::SOMAXCONN() }, SSL_cert_file => FooServer::SSL_cert_file()}],
+    });
+}
 
 
 ###----------------------------------------------------------------###
+# ipv6
 
-$prop = eval { FooServer->run(port => "localhost:2202")->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'localhost' }, "Right host");
-ok(eval { $sock->NS_port  == 2202 },    "Right port");
-ok(eval { $sock->NS_proto eq 'TCP' },   "Right proto");
+if (!eval {
+    require Socket6;
+    require IO::Socket::INET6;
+    IO::Socket::INET6->new->configure({LocalPort => 20200, Proto => 'tcp', Listen => 1, ReuseAddr => 1, Domain => Socket6::AF_INET6()}) or die;
+    IO::Socket::INET6->new->configure({LocalAddr => '::1', LocalPort => 20200, Proto => 'tcp', Listen => 1, ReuseAddr => 1, Domain => Socket6::AF_INET6()}) or die;
+    IO::Socket::INET6->new->configure({LocalAddr => 'localhost', LocalPort => 20200, Proto => 'tcp', Listen => 1, ReuseAddr => 1, Domain => Socket6::AF_INET6()}) or die;
+}) {
+    chomp(my $err = $@);
+  SKIP: {
+      skip "Cannot load Socket6 libraries - skipping IPv6 proto tests ($err)", 11;
+    };
 
-###----------------------------------------------------------------###
+} else {
 
-$prop = eval { FooServer->run(port => "localhost:2202/udp")->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'localhost' }, "Right host");
-ok(eval { $sock->NS_port  == 2202 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
+    p_c([port => 20201], {
+        bind => [{host => '*', port => 20201, proto => 'tcp', ipv => 4}], # still defaults off even with library loaded
+        sock => [{NS_host => '*', NS_port => 20201, NS_proto => 'TCP', NS_ipv => 4, NS_listen => eval { Socket::SOMAXCONN() }}],
+    });
 
-###----------------------------------------------------------------###
+    p_c([port => 20201, ipv => 6], { # explicit request
+        bind => [{host => '*', port => 20201, proto => 'tcp', ipv => 6}],
+        sock => [{NS_host => '*', NS_port => 20201, NS_proto => 'TCP', NS_ipv => 6, NS_listen => eval { Socket::SOMAXCONN() }}],
+    });
 
-$prop = eval { FooServer->run(port => ["localhost:2202/tcp"])->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'localhost' }, "Right host");
-ok(eval { $sock->NS_port  == 2202 },    "Right port");
-ok(eval { $sock->NS_proto eq 'TCP' },   "Right proto");
+    p_c([port => [{port => 20201, ipv => 6}]], {
+        bind => [{host => '*', port => 20201, proto => 'tcp', ipv => 6}],
+    });
 
-###----------------------------------------------------------------###
+    p_c([port => '[*]:20201:IPv6'], {
+        bind => [{host => '*', port => 20201, proto => 'tcp', ipv => 6}],
+        sock => [{NS_host => '*', NS_port => 20201, NS_proto => 'TCP', NS_ipv => 6, NS_listen => eval { Socket::SOMAXCONN() }}],
+    });
 
-$prop = eval { FooServer->run(port => ["bar.com:2201/udp", "foo.com:2202/tcp"])->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 2,          "Had 2 configured ports");
-ok(@{ $prop->{'sock'} } == 2,          "Had 2 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'bar.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
-$sock = eval {$prop->{'sock'}->[1]};
-ok(eval { $sock->NS_host  eq 'foo.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2202 },    "Right port");
-ok(eval { $sock->NS_proto eq 'TCP' },   "Right proto");
+    p_c([port => ['[localhost]:IPv6:20201']], {
+        bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => 6}],
+        sock => [{NS_host => 'localhost', NS_port => 20201, NS_proto => 'TCP', NS_ipv => 6, NS_listen => eval { Socket::SOMAXCONN() }}],
+    });
 
-###----------------------------------------------------------------###
+    p_c([port => ['[localhost]:20201:IPv4', 'localhost:20201:IPv6']], {
+        bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => 4}, {host => 'localhost', port => 20201, proto => 'tcp', ipv => 6}],
+        sock => [{NS_host => 'localhost', NS_port => 20201, NS_proto => 'TCP', NS_ipv => 4, NS_listen => eval { Socket::SOMAXCONN() }},
+                 {NS_host => 'localhost', NS_port => 20201, NS_proto => 'TCP', NS_ipv => 6, NS_listen => eval { Socket::SOMAXCONN() }}],
+    });
 
-$prop = eval { FooServer->run(port => [2201, "foo.com:2202/tcp"], host => 'bar.com', proto => 'UDP')->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 2,          "Had 2 configured ports");
-ok(@{ $prop->{'sock'} } == 2,          "Had 2 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'bar.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
-$sock = eval {$prop->{'sock'}->[1]};
-ok(eval { $sock->NS_host  eq 'foo.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2202 },    "Right port");
-ok(eval { $sock->NS_proto eq 'TCP' },   "Right proto");
+    p_c([port => 'localhost, 20201, IPv6, IPv4'], {
+        bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => 4}, {host => 'localhost', port => 20201, proto => 'tcp', ipv => 6}],
+    });
 
-###----------------------------------------------------------------###
+    p_c([port => [{port => '20201', host => 'localhost', ipv => [6, 4]}]], {
+        bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => 4}, {host => 'localhost', port => 20201, proto => 'tcp', ipv => 6}],
+    });
 
-$prop = eval { FooServer->run(port => 2201, host => 'bar.com', proto => 'UDP')->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'bar.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
+    p_c([port => 'localhost, 20201', ipv => 'IPv6, IPv4'], {
+        bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => 4}, {host => 'localhost', port => 20201, proto => 'tcp', ipv => 6}],
+    });
 
-###----------------------------------------------------------------###
+    p_c([port => [{port => '20201', host => 'localhost', ipv => 'IPv6, IPv4'}]], {
+        bind => [{host => 'localhost', port => 20201, proto => 'tcp', ipv => 4}, {host => 'localhost', port => 20201, proto => 'tcp', ipv => 6}],
+    });
 
-$prop = eval { FooServer->run({port => 2201, host => 'bar.com', proto => 'UDP'})->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'bar.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
+    p_c([port => 20201, host => '::1', ipv => '*'], {
+        bind => [{host => '::1', port => 20201, proto => 'tcp', ipv => 6}],
+    });
 
-###----------------------------------------------------------------###
+    #p_c([port => 20201, host => 'localhost', ipv => '*'], {
+    #    bind => [{host => '::1', port => 20201, proto => 'tcp', ipv => 6}, {host => '127.0.0.1', port => 20201, proto => 'tcp', ipv => 4}],
+    #});
+    #
+    #p_c([port => 20201, host => '*', ipv => '*'], {
+    #    bind => [{host => '::', port => 20201, proto => 'tcp', ipv => 6}],
+    #});
 
-$prop = eval { FooServer->new({port => 2201, host => 'bar.com', proto => 'UDP'})->run->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'bar.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
-
-###----------------------------------------------------------------###
-
-$prop = eval { FooServer->new(port => 2201, host => 'bar.com', proto => 'UDP')->run->{'server'} };
-ok($prop, "Loaded server");
-$prop ||= {};
-ok(@{ $prop->{'port'} } == 1,          "Had 1 configured ports");
-ok(@{ $prop->{'sock'} } == 1,          "Had 1 configured socket");
-$sock = eval {$prop->{'sock'}->[0]};
-ok(eval { $sock->NS_host  eq 'bar.com' }, "Right host");
-ok(eval { $sock->NS_port  == 2201 },    "Right port");
-ok(eval { $sock->NS_proto eq 'UDP' },   "Right proto");
-
+}

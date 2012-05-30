@@ -2,9 +2,9 @@
 #
 #  Net::Server::Single - Net::Server personality
 #
-#  $Id: Single.pm,v 1.4 2007/02/03 05:55:40 rhandom Exp $
+#  $Id: Single.pm,v 1.6 2012/05/29 22:53:00 rhandom Exp $
 #
-#  Copyright (C) 2001-2007
+#  Copyright (C) 2001-2012
 #
 #    Paul Seamons
 #    paul@seamons.com
@@ -22,14 +22,9 @@
 package Net::Server::Single;
 
 use strict;
-use vars qw($VERSION @ISA);
-use Net::Server;
+use base qw(Net::Server);
 
-
-$VERSION = $Net::Server::VERSION; # done until separated
-
-### fall back to parent methods
-@ISA = qw(Net::Server);
+sub net_server_type { __PACKAGE__ }
 
 ### this module is simple a place holder so that
 ### Net::Server::MultiType can ask for Single as one of
@@ -46,16 +41,11 @@ Net::Server::Single - Net::Server personality
 
 =head1 SYNOPSIS
 
-  use Net::Server::MultiType;
-  @ISA = qw(Net::Server::MultiType);
+    use base qw(Net::Server::Single);
 
-  sub process_request {
-     #...code...
-  }
-
-  my @types = qw(PreFork Single Fork);
-
-  Net::Server::MultiType->run(server_type=>\@types);
+    sub process_request {
+        #...code...
+    }
 
 =head1 DESCRIPTION
 

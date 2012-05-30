@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #
-#  $Id: TCP.pm,v 1.15 2010/05/05 04:41:08 rhandom Exp $
+#  $Id: TCP.pm,v 1.25 2012/05/29 21:28:54 rhandom Exp $
 #
-#  Copyright (C) 2001-2007
+#  Copyright (C) 2001-2012
 #
 #    Paul Seamons
 #    paul@seamons.com
@@ -22,110 +22,104 @@
 package Net::Server::Proto::TCP;
 
 use strict;
-use vars qw($VERSION $AUTOLOAD @ISA);
-use IO::Socket::INET6 ();
+use warnings;
+use IO::Socket::INET;
+use Net::Server::Proto;
 
-$VERSION = $Net::Server::VERSION; # done until separated
-@ISA = qw(IO::Socket::INET6);
+our @ISA = qw(IO::Socket::INET); # we may dynamically change this to INET6 based upon our server configuration
+
+sub NS_proto { 'TCP' }
+sub NS_port   { my $sock = shift; ${*$sock}{'NS_port'}   = shift if @_; return ${*$sock}{'NS_port'}   }
+sub NS_host   { my $sock = shift; ${*$sock}{'NS_host'}   = shift if @_; return ${*$sock}{'NS_host'}   }
+sub NS_ipv    { my $sock = shift; ${*$sock}{'NS_ipv'}    = shift if @_; return ${*$sock}{'NS_ipv'}    }
+sub NS_listen { my $sock = shift; ${*$sock}{'NS_listen'} = shift if @_; return ${*$sock}{'NS_listen'} }
 
 sub object {
-  my $type  = shift;
-  my $class = ref($type) || $type || __PACKAGE__;
+    my ($class, $info, $server) = @_;
 
-  my ($default_host,$port,$server) = @_;
-  my $host;
+    # we cannot do this at compile time because we have not yet read the configuration then
+    @ISA = qw(IO::Socket::INET6) if $ISA[0] eq 'IO::Socket::INET' && Net::Server::Proto->requires_ipv6($server);
 
-  ### allow for things like "domain.com:80" (IPv4)
-  if( $port =~ m/^([\w\.\-\*\/]+):(\w+)$/ ){
-    ($host,$port) = ($1,$2);
-
-  ### allow for things like "[::1]:80" (IPv6)
-  }elsif( $port =~ m/^\[([\:\w\.\-\*\/]+)\]:(\w+)$/ ){
-    ($host,$port) = ($1,$2);
-
-  ### allow for things like "80"
-  }elsif( $port =~ /^(\w+)$/ ){
-    ($host,$port) = ($default_host,$1);
-
-  ### don't know that style of port
-  }else{
-    $server->fatal("Undeterminate port \"$port\" under ".__PACKAGE__);
-  }
-
-  ### create the handle under this package
-  my $sock = $class->SUPER::new();
-
-  ### store some properties
-  $sock->NS_host($host);
-  $sock->NS_port($port);
-  $sock->NS_proto('TCP');
-
-  return $sock;
+    my @sock = $class->SUPER::new();
+    foreach my $sock (@sock) {
+        $sock->NS_host($info->{'host'});
+        $sock->NS_port($info->{'port'});
+        $sock->NS_ipv( $info->{'ipv'} );
+        $sock->NS_listen(defined($info->{'listen'}) ? $info->{'listen'}
+                        : defined($server->{'server'}->{'listen'}) ? $server->{'server'}->{'listen'}
+                        : Socket::SOMAXCONN());
+    }
+    return wantarray ? @sock : $sock[0];
 }
 
 sub log_connect {
-  my $sock = shift;
-  my $server = shift;
-  my $host   = $sock->NS_host; 
-  my $port   = $sock->NS_port;
-  my $proto  = $sock->NS_proto;
- $server->log(2,"Binding to $proto port $port on host $host\n");
+    my ($sock, $server) = @_;
+    $server->log(2, "Binding to ".$sock->NS_proto." port ".$sock->NS_port." on host ".$sock->NS_host." with IPv".$sock->NS_ipv);
 }
 
-### connect the first time
 sub connect {
-  my $sock   = shift;
-  my $server = shift;
-  my $prop   = $server->{server};
+    my ($sock, $server) = @_;
+    my $host = $sock->NS_host;
+    my $port = $sock->NS_port;
+    my $ipv  = $sock->NS_ipv;
+    my $lstn = $sock->NS_listen;
 
-  my $host  = $sock->NS_host;
-  my $port  = $sock->NS_port;
+    $sock->SUPER::configure({
+        LocalPort => $port,
+        Proto     => 'tcp',
+        Listen    => $lstn,
+        ReuseAddr => 1,
+        Reuse     => 1,
+        (($host ne '*') ? (LocalAddr => $host) : ()), # * is all
+        ($sock->isa("IO::Socket::INET6") ? (Domain => ($ipv eq '6') ? Socket6::AF_INET6() : ($ipv eq '4') ? Socket::AF_INET() : Socket::AF_UNSPEC()) : ()),
+    }) || $server->fatal("Can't connect to TCP port $port on $host [$!]");
 
-  my %args = ();
-  $args{LocalPort} = $port;                  # what port to bind on
-  $args{Proto}     = 'tcp';                  # what procol to use
-  $args{LocalAddr} = $host if $host !~ /\*/; # what local address (* is all)
-  $args{Listen}    = $prop->{listen};        # how many connections for kernel to queue
-  $args{Reuse}     = 1;  # allow us to rebind the port on a restart
-
-  ### connect to the sock
-  $sock->SUPER::configure(\%args)
-    or $server->fatal("Can't connect to TCP port $port on $host [$!]");
-
-  if ($port == 0 && ($port = $sock->sockport)) {
-    $sock->NS_port($port);
-    $server->log(2,"Bound to auto-assigned port $port");
-  }
-
-  $server->fatal("Back sock [$!]!".caller())
-    unless $sock;
-
+    if ($port eq '0' and $port = $sock->sockport) {
+        $server->log(2, "  Bound to auto-assigned port $port");
+        ${*$sock}{'NS_orig_port'} = $sock->NS_port;
+        $sock->NS_port($port);
+    } elsif ($port =~ /\D/ and $port = $sock->sockport) {
+        $server->log(2, "  Bound to service port ".$sock->NS_port()."($port)");
+        ${*$sock}{'NS_orig_port'} = $sock->NS_port;
+        $sock->NS_port($port);
+    }
 }
 
-### connect on a sig -HUP
-sub reconnect {
-  my $sock = shift;
-  my $fd   = shift;
-  my $server = shift;
+sub reconnect { # after a sig HUP
+    my ($sock, $fd, $server, $port) = @_;
+    $server->log(3,"Reassociating file descriptor $fd with ".$sock->NS_proto." on [".$sock->NS_host."]:".$sock->NS_port.", using IPv".$sock->NS_ipv);
+    $sock->fdopen($fd, 'w') or $server->fatal("Error opening to file descriptor ($fd) [$!]");
 
-  $sock->fdopen( $fd, 'w' )
-    or $server->fatal("Error opening to file descriptor ($fd) [$!]");
+    if ($sock->isa("IO::Socket::INET6")) {
+        my $ipv = $sock->NS_ipv;
+        ${*$sock}{'io_socket_domain'} = ($ipv eq '6') ? Socket6::AF_INET6() : ($ipv eq '4') ? Socket::AF_INET() : Socket::AF_UNSPEC();
+    }
 
+    if ($port ne $sock->NS_port) {
+        $server->log(2, "  Re-bound to previously assigned port $port");
+        ${*$sock}{'NS_orig_port'} = $sock->NS_port;
+        $sock->NS_port($port);
+    }
 }
 
-### allow for endowing the child
 sub accept {
-  my $sock = shift;
-  my $client = $sock->SUPER::accept();
-
-  ### pass items on
-  if( defined($client) ){
-    $client->NS_proto( $sock->NS_proto );
-  }
-
-  return $client;
+    my ($sock, $class) = (@_);
+    my ($client, $peername);
+    if (wantarray) {
+        ($client, $peername) = $sock->SUPER::accept($class);
+    } else {
+        $client = $sock->SUPER::accept($class);
+    }
+    if (defined $client) {
+        $client->NS_port($sock->NS_port);
+    }
+    return $client;
 }
 
+sub poll_cb { # implemented for psgi compatibility - TODO - should poll appropriately for Multipex
+    my ($self, $cb) = @_;
+    return $cb->($self);
+}
 
 ###----------------------------------------------------------------###
 
@@ -139,8 +133,7 @@ sub read_until { # only sips the data - but it allows for compatibility with SSL
         if (defined($bytes) && length($content) >= $bytes) {
             $ok = 2;
             last;
-        }
-        elsif (defined($end_qr) && $content =~ $end_qr) {
+        } elsif (defined($end_qr) && $content =~ $end_qr) {
             $ok = 1;
             last;
         }
@@ -155,51 +148,13 @@ sub read_until { # only sips the data - but it allows for compatibility with SSL
 ### a newline is not allowed
 ### the hup_string must be a unique identifier based on configuration info
 sub hup_string {
-  my $sock = shift;
-  return join("|",
-              $sock->NS_host,
-              $sock->NS_port,
-              $sock->NS_proto,
-              );
+    my $sock = shift;
+    return join "|", $sock->NS_host, $sock->NS_port, $sock->NS_proto, 'ipv'.$sock->NS_ipv, (defined(${*$sock}{'NS_orig_port'}) ? ${*$sock}{'NS_orig_port'} : ());
 }
 
-### short routine to show what we think we are
 sub show {
-  my $sock = shift;
-  my $t = "Ref = \"" .ref($sock) . "\"\n";
-  foreach my $prop ( qw(NS_proto NS_port NS_host) ){
-    $t .= "  $prop = \"" .$sock->$prop()."\"\n";
-  }
-  return $t;
-}
-
-### self installer
-sub AUTOLOAD {
-  my $sock = shift;
-
-  my ($prop) = $AUTOLOAD =~ /::([^:]+)$/ ? $1 : '';
-  if( ! $prop ){
-    die "No property called.";
-  }
-
-  if( $prop =~ /^(NS_proto|NS_port|NS_host|NS_recv_len|NS_recv_flags)$/ ){
-    no strict 'refs';
-    * { __PACKAGE__ ."::". $prop } = sub {
-      my $sock = shift;
-      if( @_ ){
-        ${*$sock}{$prop} = shift;
-        return delete ${*$sock}{$prop} unless defined ${*$sock}{$prop};
-      }else{
-        return ${*$sock}{$prop};
-      }
-    };
-    use strict 'refs';
-
-    $sock->$prop(@_);
-
-  }else{
-    die "What method is that? [$prop]";
-  }
+    my $sock = shift;
+    return "Ref = \"".ref($sock). "\" (".$sock->hup_string.")\n";
 }
 
 1;
@@ -224,6 +179,52 @@ See L<Net::Server::Proto>.
 
 There are no additional parameters that can be specified.
 See L<Net::Server> for more information on reading arguments.
+
+=head1 INTERNAL METHODS
+
+=over 4
+
+=item C<object>
+
+Returns an object with parameters suitable for eventual creation of
+a IO::Socket::INET object listining on UDP.
+
+=item C<log_connect>
+
+Called before binding the socket to provide useful information to the logs.
+
+=item C<connect>
+
+Called when actually binding the port.  Handles default parameters
+before calling parent method.
+
+=item C<reconnect>
+
+Called instead of connect method during a server hup.
+
+=item C<accept>
+
+Override of the parent class to make sure necessary parameters are passed down to client sockets.
+
+=item C<poll_cb>
+
+Allow for psgi compatible interface during HTTP server.
+
+=item C<read_until>
+
+Takes a regular expression, reads from the socket until the regular expression is matched.
+
+=item C<hup_string>
+
+Returns a unique identifier that can be passed to the re-exec'ed process during HUP.
+
+=item C<show>
+
+Basic dumper of properties stored in the glob.
+
+=item C<AUTOLOAD>
+
+Handle accessor methods.
 
 =head1 LICENCE
 

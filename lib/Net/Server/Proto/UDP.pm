@@ -2,9 +2,9 @@
 #
 #  Net::Server::Proto::UDP - Net::Server Protocol module
 #
-#  $Id: UDP.pm,v 1.13 2007/02/03 05:56:09 rhandom Exp $
+#  $Id: UDP.pm,v 1.26 2012/05/29 22:55:53 rhandom Exp $
 #
-#  Copyright (C) 2001-2007
+#  Copyright (C) 2001-2012
 #
 #    Paul Seamons
 #    paul@seamons.com
@@ -25,75 +25,80 @@
 package Net::Server::Proto::UDP;
 
 use strict;
-use vars qw($VERSION);
 use base qw(Net::Server::Proto::TCP);
 
-$VERSION = $Net::Server::VERSION; # done until separated
+my @udp_args = qw(
+    udp_recv_len
+    udp_recv_flags
+    udp_broadcast
+);
+
+sub NS_proto { 'UDP' }
+sub NS_recv_len   { my $sock = shift; ${*$sock}{'NS_recv_len'}   = shift if @_; return ${*$sock}{'NS_recv_len'}   }
+sub NS_recv_flags { my $sock = shift; ${*$sock}{'NS_recv_flags'} = shift if @_; return ${*$sock}{'NS_recv_flags'} }
+sub NS_broadcast  { my $sock = shift; ${*$sock}{'NS_broadcast'}  = shift if @_; return ${*$sock}{'NS_broadcast'}  }
 
 sub object {
-  my $type  = shift;
-  my $class = ref($type) || $type || __PACKAGE__;
+    my ($class, $info, $server) = @_;
 
-  my $sock = $class->SUPER::object( @_ );
+    # we cannot do this at compile time because we have not yet read the configuration then
+    # (this is the height of rudeness changing another's class on their behalf)
+    @Net::Server::Proto::TCP::ISA = qw(IO::Socket::INET6) if $Net::Server::Proto::TCP::ISA[0] eq 'IO::Socket::INET' && Net::Server::Proto->requires_ipv6($server);
 
-  $sock->NS_proto('UDP');
+    my $udp = $server->{'server'}->{'udp_args'} ||= do {
+        my %temp = map {$_ => undef} @udp_args;
+        $server->configure({map {$_ => \$temp{$_}} @udp_args});
+        \%temp;
+    };
 
-  ### set a few more parameters
-  my($default_host,$port,$server) = @_;
-  my $prop = $server->{server};
+    my $len = defined($info->{'udp_recv_len'}) ? $info->{'udp_recv_len'}
+            : defined($udp->{'udp_recv_len'})  ? $udp->{'udp_recv_len'}
+            : 4096;
+    $len = ($len =~ /^(\d+)$/) ? $1 : 4096;
 
-  ### read any additional protocol specific arguments
-  $server->configure({
-    udp_recv_len   => \$prop->{udp_recv_len},
-    udp_recv_flags => \$prop->{udp_recv_flags},
-    udp_broadcast  => \$prop->{udp_broadcast},
-  });
+    my $flg = defined($info->{'udp_recv_flags'}) ? $info->{'udp_recv_flags'}
+            : defined($udp->{'udp_recv_flags'})  ? $udp->{'udp_recv_flags'}
+            : 0;
+    $flg = ($flg =~ /^(\d+)$/) ? $1 : 0;
 
-  $prop->{udp_recv_len} = 4096
-    unless defined($prop->{udp_recv_len})
-    && $prop->{udp_recv_len} =~ /^\d+$/;
-
-  $prop->{udp_recv_flags} = 0
-    unless defined($prop->{udp_recv_flags})
-    && $prop->{udp_recv_flags} =~ /^\d+$/;
-
-  $prop->{udp_broadcast} = undef
-    unless defined($prop->{udp_broadcast})
-    && $prop->{udp_broadcast};
-
-  $sock->NS_recv_len(   $prop->{udp_recv_len} );
-  $sock->NS_recv_flags( $prop->{udp_recv_flags} );
-
-  return $sock;
+    my @sock = $class->SUPER::new(); # it is possible that multiple connections will be returned if INET6 is in effect
+    foreach my $sock (@sock) {
+        $sock->NS_host($info->{'host'});
+        $sock->NS_port($info->{'port'});
+        $sock->NS_ipv( $info->{'ipv'} );
+        $sock->NS_recv_len($len);
+        $sock->NS_recv_flags($flg);
+        $sock->NS_broadcast(exists($info->{'udp_broadcast'}) ? $info->{'udp_broadcast'} : $udp->{'upd_broadcast'});
+    }
+    return wantarray ? @sock : $sock[0];
 }
 
-
-### connect the first time
-### doesn't support the listen or the reuse option
 sub connect {
-  my $sock   = shift;
-  my $server = shift;
-  my $prop   = $server->{server};
+    my ($sock, $server) = @_;
+    my $host = $sock->NS_host;
+    my $port = $sock->NS_port;
+    my $ipv  = $sock->NS_ipv;
 
-  my $host  = $sock->NS_host;
-  my $port  = $sock->NS_port;
+    $sock->SUPER::configure({
+        LocalPort => $port,
+        Proto     => 'udp',
+        ReuseAddr => 1,
+        Reuse => 1, # may not be needed on UDP
+        (($host ne '*') ? (LocalAddr => $host) : ()), # * is all
+        ($sock->isa("IO::Socket::INET6") ? (Domain => ($ipv eq '6') ? Socket6::AF_INET6() : ($ipv eq '4') ? Socket::AF_INET() : Socket::AF_UNSPEC()) : ()),
+        ($sock->NS_broadcast ? (Broadcast => 1) : ()),
+    }) or $server->fatal("Cannot bind to UDP port $port on $host [$!]");
 
-  my %args = ();
-  $args{LocalPort} = $port;                  # what port to bind on
-  $args{Proto}     = 'udp';                  # what procol to use
-  $args{LocalAddr} = $host if $host !~ /\*/; # what local address (* is all)
-  $args{Reuse}     = 1;  # allow us to rebind the port on a restart
-  $args{Broadcast} = 1 if $prop->{udp_broadcast};
-
-  ### connect to the sock
-  $sock->SUPER::configure(\%args)
-    or $server->fatal("Can't connect to UDP port $port on $host [$!]");
-
-  $server->fatal("Back sock [$!]!".caller())
-    unless $sock;
-
+    if ($port eq 0 and $port = $sock->sockport) {
+        $server->log(2, "  Bound to auto-assigned port $port");
+        ${*$sock}{'NS_orig_port'} = $sock->NS_port;
+        $sock->NS_port($port);
+    } elsif ($port =~ /\D/ and $port = $sock->sockport) {
+        $server->log(2, "  Bound to service port ".$sock->NS_port()."($port)");
+        ${*$sock}{'NS_orig_port'} = $sock->NS_port;
+        $sock->NS_port($port);
+    }
 }
-
 
 1;
 
@@ -101,7 +106,7 @@ __END__
 
 =head1 NAME
 
-  Net::Server::Proto::UDP - Net::Server UDP protocol.
+Net::Server::Proto::UDP - Net::Server UDP protocol.
 
 =head1 SYNOPSIS
 
@@ -124,12 +129,16 @@ L<Net::Server> for more information on reading arguments.
 =item udp_recv_len
 
 Specifies the number of bytes to read from the UDP connection
-handle.  Data will be read into $self->{server}->{udp_data}.
+handle.  Data will be read into $self->{'server'}->{'udp_data'}.
 Default is 4096.  See L<IO::Socket::INET> and L<recv>.
 
 =item udp_recv_flags
 
 See L<recv>.  Default is 0.
+
+=item udp_broadcast
+
+Default is undef.
 
 =back
 
@@ -141,6 +150,22 @@ See L<recv>.  Default is 0.
   udp_recv_len      \d+                      4096
   udp_recv_flags    \d+                      0
   udp_broadcast     bool                     undef
+
+=head1 INTERNAL METHODS
+
+=over 4
+
+=item C<object>
+
+Returns an object with parameters suitable for eventual creation of
+a IO::Socket::INET object listining on UDP.
+
+=item C<connect>
+
+Called when actually binding the port.  Handles default parameters
+before calling parent method.
+
+=back
 
 =head1 LICENCE
 

@@ -2,9 +2,9 @@
 #
 #  Net::Server::HTTP - Extensible Perl HTTP base server
 #
-#  $Id: HTTP.pm,v 1.9 2010/07/13 19:15:16 rhandom Exp $
+#  $Id: HTTP.pm,v 1.17 2012/05/30 13:37:20 rhandom Exp $
 #
-#  Copyright (C) 2010
+#  Copyright (C) 2010-2012
 #
 #    Paul Seamons
 #    paul@seamons.com
@@ -20,45 +20,22 @@
 package Net::Server::HTTP;
 
 use strict;
-use warnings;
 use base qw(Net::Server::MultiType);
-use vars qw($VERSION);
-use Scalar::Util qw(weaken);
+use Scalar::Util qw(weaken blessed);
+use IO::Handle ();
 
-$VERSION = $Net::Server::VERSION; # done until separated
+sub net_server_type { __PACKAGE__ }
 
 sub options {
-  my ($self, $ref) = @_;
-  my $prop = $self->{server};
-  $self->SUPER::options($ref);
-
-  foreach ( qw(timeout_header
-               timeout_idle
-               server_revision
-               max_header_size
-               ) ){
-    $prop->{$_} = undef unless exists $prop->{$_};
-    $ref->{$_} = \$prop->{$_};
-  }
+    my $self = shift;
+    my $ref  = $self->SUPER::options(@_);
+    my $prop = $self->{'server'};
+    $ref->{$_} = \$prop->{$_} for qw(timeout_header timeout_idle server_revision max_header_size);
+    return $ref;
 }
 
-### make sure some defaults are set
-sub post_configure {
-  my $self = shift;
-  my $prop = $self->{server};
-  $self->SUPER::post_configure;
-
-  my $d = {
-    timeout_header  => 15,
-    timeout_idle    => 60,
-    server_revision => __PACKAGE__."/$VERSION",
-    max_header_size => 100_000,
-  };
-  $prop->{$_} = $d->{$_} foreach grep {!defined($prop->{$_})} keys %$d;
-}
-
-sub timeout_header  { shift->{'server'}->{'timeout_header'} }
-sub timeout_idle    { shift->{'server'}->{'timeout_idle'} }
+sub timeout_header  { shift->{'server'}->{'timeout_header'}  }
+sub timeout_idle    { shift->{'server'}->{'timeout_idle'}    }
 sub server_revision { shift->{'server'}->{'server_revision'} }
 sub max_header_size { shift->{'server'}->{'max_header_size'} }
 
@@ -66,9 +43,21 @@ sub default_port { 80 }
 
 sub default_server_type { 'Fork' }
 
-sub pre_bind {
+sub post_configure {
     my $self = shift;
+    $self->SUPER::post_configure(@_);
     my $prop = $self->{'server'};
+
+    # set other defaults
+    my $d = {
+        timeout_header  => 15,
+        timeout_idle    => 60,
+        server_revision => __PACKAGE__."/$Net::Server::VERSION",
+        max_header_size => 100_000,
+    };
+    $prop->{$_} = $d->{$_} foreach grep {!defined($prop->{$_})} keys %$d;
+
+    return if $self->net_server_type ne __PACKAGE__;
 
     # install a callback that will handle our outbound header negotiation for the clients similar to what apache does for us
     my $copy = $self;
@@ -79,7 +68,7 @@ sub pre_bind {
         alarm($copy->timeout_idle); # reset timeout
         return $client->$method(@_) if ${*$client}{'headers_sent'};
         if ($method ne 'print') {
-            $client->print("HTTP/1.0 501 Print\r\nContent-type:text/html\r\n\r\nHeaders may only be sent via print method ($method)");
+            $client->print("HTTP/1.0 501 Print\015\012Content-type:text/html\015\012\015\012Headers may only be sent via print method ($method)");
             die "All headers must be done via print";
         }
         my $headers = ${*$client}{'headers'} || '';
@@ -90,7 +79,7 @@ sub pre_bind {
         }
         ${*$client}{'headers_sent'} = 1;
         delete ${*$client}{'headers'};
-        if ($headers =~ m{^HTTP/1.[01] \s+ \d+ (?: | \s+ .+)\r?\n}) {
+        if ($headers =~ m{^HTTP/1.[01] \s+ \d+ (?: | \s+ .+)\r?\n}x) {
             # looks like they are sending their own status
         }
         elsif ($headers =~ /^Status:\s+(\d+) (?:|\s+(.+?))\s*$/im) {
@@ -108,25 +97,27 @@ sub pre_bind {
         return $client->print($headers);
     };
     weaken $copy;
-
-    return $self->SUPER::pre_bind(@_);
 }
 
 sub send_status {
     my ($self, $status, $msg) = @_;
     $msg ||= ($status == 200) ? 'OK' : '-';
-    print "HTTP/1.0 $status $msg\r\n";
-    print "Date: ".gmtime()." GMT\r\n";
-    print "Connection: close\r\n";
-    print "Server: ".$self->server_revision."\r\n";
+    $self->{'server'}->{'client'}->print(
+        "HTTP/1.0 $status $msg\015\012",
+        "Date: ".gmtime()." GMT\015\012",
+        "Connection: close\015\012",
+        "Server: ".$self->server_revision."\015\012",
+    );
 }
 
 sub send_501 {
     my ($self, $err) = @_;
     $self->send_status(500, 'Died');
-    print "Content-type: text/html\r\n\r\n";
-    print "<h1>Internal Server</h1>";
-    print "<p>$err</p>";
+    $self->{'server'}->{'client'}->print(
+        "Content-type: text/html\015\012\015\012",
+        "<h1>Internal Server</h1>",
+        "<p>$err</p>",
+    );
 }
 
 ###----------------------------------------------------------------###
@@ -144,14 +135,15 @@ sub clear_http_env {
 
 sub process_request {
     my $self = shift;
+    my $client = shift || $self->{'server'}->{'client'};
 
     local $SIG{'ALRM'} = sub { die "Server Timeout\n" };
     my $ok = eval {
         alarm($self->timeout_header);
-        $self->process_headers;
+        $self->process_headers($client);
 
         alarm($self->timeout_idle);
-        $self->process_http_request;
+        $self->process_http_request($client);
         alarm(0);
         1;
     };
@@ -164,22 +156,23 @@ sub process_request {
     }
 }
 
-sub script_name { shift->{'script_name'} || $0 }
+sub script_name { shift->{'script_name'} || '' }
 
 sub process_headers {
     my $self = shift;
+    my $client = shift || $self->{'server'}->{'client'};
 
     $ENV{'REMOTE_PORT'} = $self->{'server'}->{'peerport'};
     $ENV{'REMOTE_ADDR'} = $self->{'server'}->{'peeraddr'};
     $ENV{'SERVER_PORT'} = $self->{'server'}->{'sockport'};
     $ENV{'SERVER_ADDR'} = $self->{'server'}->{'sockaddr'};
-    $ENV{'HTTPS'} = 'on' if $self->{'server'}->{'client'}->NS_proto eq 'SSLEAY';
+    $ENV{'HTTPS'} = 'on' if $self->{'server'}->{'client'}->NS_proto =~ /SSL/;
 
-    my ($ok, $headers) = $self->{'server'}->{'client'}->read_until($self->max_header_size, qr{\n\r?\n});
-    die "Couldn't parse headers successfully" if $ok != 1;
+    my ($ok, $headers) = $client->read_until($self->max_header_size, qr{\n\r?\n});
+    die "Could not parse http headers successfully\n" if $ok != 1;
 
     my ($req, @lines) = split /\r?\n/, $headers;
-    if ($req !~ m{ ^\s*(GET|POST|PUT|DELETE|PUSH|HEAD)\s+(.+)\s+HTTP/1\.[01]\s*$ }x) {
+    if ($req !~ m{ ^\s*(GET|POST|PUT|DELETE|PUSH|HEAD|OPTIONS)\s+(.+)\s+HTTP/1\.[01]\s*$ }x) {
         die "Invalid request\n";
     }
     $ENV{'REQUEST_METHOD'} = $1;
@@ -197,21 +190,24 @@ sub process_headers {
         $key = uc($key);
         $key =~ y/-/_/;
         $key =~ s/^\s+//;
-        $key = "HTTP_$key" if $key ne 'CONTENT_LENGTH';
+        $key = "HTTP_$key" if $key !~ /^CONTENT_(?:LENGTH|TYPE)$/;
         $val =~ s/\s+$//;
-        $ENV{$key} = $val;
+        if (exists $ENV{$key}) {
+            $ENV{$key} .= $val;
+        } else {
+            $ENV{$key} = $val;
+        }
     }
 }
 
 sub process_http_request {
-    my $self = shift;
+    my ($self, $client) = @_;
     print "Content-type: text/html\n\n";
     print "<form method=post action=/bam><input type=text name=foo><input type=submit></form>\n";
-
-    if (require Data::Dumper) {
+    if (eval { require Data::Dumper }) {
         local $Data::Dumper::Sortkeys = 1;
         my $form = {};
-        if (require CGI) {  my $q = CGI->new; $form->{$_} = $q->param($_) for $q->param;  }
+        if (eval { require CGI }) {  my $q = CGI->new; $form->{$_} = $q->param($_) for $q->param;  }
         print "<pre>".Data::Dumper->Dump([\%ENV, $form], ['*ENV', 'form'])."</pre>";
     }
 }
@@ -226,7 +222,7 @@ Net::Server::HTTP - very basic Net::Server based HTTP server class
 
 =head1 TEST ONE LINER
 
-    perl -e 'use Net::Server::HTTP; Net::Server::HTTP->run(port=>8080)'
+    perl -e 'use base qw(Net::Server::HTTP); main->run(port => 8080)'
 
 =head1 SYNOPSIS
 
@@ -239,23 +235,29 @@ Net::Server::HTTP - very basic Net::Server based HTTP server class
         print "Content-type: text/html\n\n";
         print "<form method=post action=/bam><input type=text name=foo><input type=submit></form>\n";
 
-        if (require Data::Dumper) {
-            local $Data::Dumper::Sortkeys = 1;
-            my $form = {};
-            if (require CGI) {  my $q = CGI->new; $form->{$_} = $q->param($_) for $q->param;  }
-            print "<pre>".Data::Dumper->Dump([\%ENV, $form], ['*ENV', 'form'])."</pre>";
-        }
+        require Data::Dumper;
+        local $Data::Dumper::Sortkeys = 1;
+
+        require CGI;
+        my $form = {};
+        my $q = CGI->new; $form->{$_} = $q->param($_) for $q->param;
+
+        print "<pre>".Data::Dumper->Dump([\%ENV, $form], ['*ENV', 'form'])."</pre>";
     }
 
 =head1 DESCRIPTION
 
-Even though Net::Server::HTTP doesn't fall into the normal parallel of the other Net::Server flavors,
-handling HTTP requests is an often requested feature and is a standard and simple protocol.
+Even though Net::Server::HTTP doesn't fall into the normal parallel of
+the other Net::Server flavors, handling HTTP requests is an often
+requested feature and is a standard and simple protocol.
 
-Net::Server::HTTP begins with base type MultiType defaulting to Net::Server::Fork.  It is easy
-to change it to any of the other Net::Server flavors by passing server_type => $other_flavor in the
-server configurtation.  The port has also been defaulted to port 80 - but could easily be changed to
-another through the server configuration.
+Net::Server::HTTP begins with base type MultiType defaulting to
+Net::Server::Fork.  It is easy to change it to any of the other
+Net::Server flavors by passing server_type => $other_flavor in the
+server configurtation.  The port has also been defaulted to port 80 -
+but could easily be changed to another through the server
+configuration.  You can also very easily add ssl by including,
+proto=>"ssl" and provide a SSL_cert_file and SSL_key_file.
 
 =head1 METHODS
 
@@ -263,23 +265,32 @@ another through the server configuration.
 
 =item C<process_http_request>
 
-During this method, the %ENV will have been set to a standard CGI style environment.  You will need to
-be sure to print the Content-type header.  This is one change from the other standard Net::Server
-base classes.
+Will be passed the client handle, and will have STDOUT and STDIN tied
+to the client.
 
-During this method you can read from ENV and STDIN just like a normal HTTP request in other web servers.
-You can print to STDOUT and Net::Server will handle the header negotiation for you.
+During this method, the %ENV will have been set to a standard CGI
+style environment.  You will need to be sure to print the Content-type
+header.  This is one change from the other standard Net::Server base
+classes.
 
-Note: Net::Server::HTTP has no concept of document root or script aliases or default handling of
-static content.  That is up to the consumer of Net::Server::HTTP to work out.
+During this method you can read from %ENV and STDIN just like a normal
+HTTP request in other web servers.  You can print to STDOUT and
+Net::Server will handle the header negotiation for you.
 
-Net::Server::HTTP comes with a basic ENV display installed as the default process_request method.
+Note: Net::Server::HTTP has no concept of document root or script
+aliases or default handling of static content.  That is up to the
+consumer of Net::Server::HTTP to work out.
+
+Net::Server::HTTP comes with a basic %ENV display installed as the
+default process_http_request method.
 
 =item C<process_request>
 
-This method has been overridden in Net::Server::HTTP - you should not use it while using Net::Server::HTTP.
-This method parses the environment and sets up request alarms and handles dying failures.  It calls
-process_http_request once the request is ready.
+This method has been overridden in Net::Server::HTTP - you should not
+use it while using Net::Server::HTTP.  This overridden method parses
+the environment and sets up request alarms and handles dying failures.
+It calls process_http_request once the request is ready and headers
+have been parsed.
 
 =item C<send_status>
 
@@ -289,16 +300,19 @@ Takes an HTTP status and a message.  Sends out the correct headers.
 
 Calls send_status with 501 and the argument passed to send_501.
 
-=head1 COMMAND LINE ARGUMENTS
+=back
 
-In addition to the command line arguments of the Net::Server
-base classes you can also set the following options.
+=head1 OPTIONS
+
+In addition to the command line arguments of the Net::Server base
+classes you can also set the following options.
 
 =over 4
 
 =item max_header_size
 
-Defaults to 100_000.  Maximum number of bytes to read while parsing headers.
+Defaults to 100_000.  Maximum number of bytes to read while parsing
+headers.
 
 =item server_revision
 
@@ -310,8 +324,8 @@ Defaults to 15 - number of seconds to wait for parsing headers.
 
 =item timeout_idle
 
-Defaults to 60 - number of seconds a request can be idle before
-the request is closed.
+Defaults to 60 - number of seconds a request can be idle before the
+request is closed.
 
 =back
 
