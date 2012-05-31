@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.145 2012/05/30 21:21:57 rhandom Exp $
+#  $Id: Server.pm,v 1.146 2012/05/31 21:41:41 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -32,7 +32,7 @@ use Net::Server::Proto ();
 use Net::Server::Daemonize qw(check_pid_file create_pid_file safe_fork
                               get_uid get_gid set_uid set_gid);
 
-our $VERSION = '2.001';
+our $VERSION = '2.002';
 
 sub new {
     my $class = shift || die "Missing class";

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto - Net::Server Protocol compatibility layer
 #
-#  $Id: Proto.pm,v 1.22 2012/05/29 23:15:10 rhandom Exp $
+#  $Id: Proto.pm,v 1.23 2012/05/31 21:36:45 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -65,7 +65,9 @@ sub parse_info {
     }
     $proto = lc $info->{'proto'};
 
-
+    if ($info->{'proto'} =~ /^UNIX/i) {
+        return ({%$info, ipv => '*'});
+    }
     $ipv = $info->{'ipv'} || $ipv || '';
     $ipv = join '', @$ipv if ref($ipv) eq 'ARRAY';
     $server->fatal("Invalid ipv parameter - must contain 4, 6, or *") if $ipv && $ipv !~ /[46*]/;
