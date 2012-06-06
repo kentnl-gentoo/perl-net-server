@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::UNIX - Net::Server Protocol module
 #
-#  $Id: UNIX.pm,v 1.15 2012/05/29 23:27:31 rhandom Exp $
+#  $Id: UNIX.pm,v 1.17 2012/06/06 14:07:31 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -31,13 +31,16 @@ sub NS_host   { '*' }
 sub NS_ipv    { '*' }
 sub NS_listen { my $sock = shift; ${*$sock}{'NS_listen'} = shift if @_; return ${*$sock}{'NS_listen'} }
 sub NS_unix_type { 'SOCK_STREAM' }
+sub NS_unix_path { shift->NS_port } # legacy systems used this
 
 sub object {
     my ($class, $info, $server) = @_;
 
     if ($class eq __PACKAGE__) {
-        $server->configure({unix_type => \$server->{'server'}->{'unix_type'}})
-            if ! exists $server->{'server'}->{'unix_type'};
+        $server->configure({
+            unix_type => \$server->{'server'}->{'unix_type'},
+            unix_path => \$server->{'server'}->{'unix_path'}, # I don't believe this ever worked since a valid port specification also has to exist
+        }) if ! exists $server->{'server'}->{'unix_type'};
         my $u_type = uc( defined($info->{'unix_type'}) ? $info->{'unix_type'}
                        : defined($server->{'server'}->{'unix_type'}) ? $server->{'server'}->{'unix_type'}
                        : 'SOCK_STREAM');
@@ -47,6 +50,7 @@ sub object {
         } elsif ($u_type ne 'SOCK_STREAM' && $u_type ne ''.SOCK_STREAM()) {
             $server->fatal("Invalid type for UNIX socket ($u_type)... must be SOCK_STREAM or SOCK_DGRAM");
         }
+        $info->{'port'} ||= $info->{'unix_path'} = $server->{'server'}->{'unix_path'};
     }
 
     my $sock = $class->SUPER::new();
@@ -133,13 +137,35 @@ use the new proto UNIXDGRAM.
 
 =back
 
+=head1 METHODS
+
+=over 4
+
+=item NS_unix_path/NS_unix_type
+
+In addition to the standard NS_ methods of Net::Server::Proto classes,
+the UNIX types also have legacy calls to NS_unix_path and
+NS_unix_type.
+
+Since version 2.000, NS_unix_path is simply an alias to NS_port.
+NS_unix_type is now redundant with NS_proto.
+
+These methods were missing between version 2.000 and 2.003 but have
+been returned as legacy bridges.
+
+=back
+
 =head1 QUICK PARAMETER LIST
 
   Key               Value                    Default
 
-  # UNIX socket parameters
+  # deprecated UNIX socket parameters
   unix_type         (SOCK_STREAM|SOCK_DGRAM) SOCK_STREAM
   port              "filename"               undef
+
+  # more recent usage
+  port              "filename / UNIX"
+  port              "filename / UNIXDGRAM"
 
 =head1 LICENCE
 
