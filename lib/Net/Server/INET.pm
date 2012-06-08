@@ -2,7 +2,7 @@
 #
 #  Net::Server::INET - Net::Server personality
 #
-#  $Id: INET.pm,v 1.13 2012/05/30 13:29:34 rhandom Exp $
+#  $Id: INET.pm,v 1.14 2012/06/07 13:12:34 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -55,7 +55,7 @@ sub get_client_info {
     my $sock = shift || $prop->{'client'};
 
     if (blessed($sock) && $sock->can('NS_proto') && $sock->NS_proto eq 'UNIX') {
-        $self->log(3, $self->log_time." CONNECT UNIX Socket: \"".$sock->NS_unix_path."\"");
+        $self->log(3, $self->log_time." CONNECT UNIX Socket: \"".$sock->NS_port."\"");
         return;
     }
 

@@ -1,5 +1,14 @@
 Revision history for Perl extension Net::Server.
 
+2.004  Jun 08 2012
+        NOTE: Version 2.005 will change the default ipv value to * meaning it will attempt to bind IPv4 and IPv6 if they are available if you pass a hostname
+        - Add Net::Server::Proto->get_addr_info which can more reliably resolve domain information.
+        - Use that information to figure out an appropriate host to bind to for tests
+        - Make get_addr_info less reliant on magic values of sysctl net.ipv6.bindv6only
+        - Allow all tests to function in IPv6 only environments
+        - Fix broken number of tests in test suite
+        - Add warnings about changes to the default value of ipv coming in 2.005
+
 2.003  Jun 06 2012
         - Make the logging system pluggable
         - Added net-server server executor for writing easier one line servers

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto - Net::Server Protocol compatibility layer
 #
-#  $Id: Proto.pm,v 1.24 2012/06/06 13:46:28 rhandom Exp $
+#  $Id: Proto.pm,v 1.26 2012/06/08 15:24:23 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -23,6 +23,7 @@ package Net::Server::Proto;
 
 use strict;
 use warnings;
+use Socket ();
 
 my $requires_ipv6 = 0;
 
@@ -79,40 +80,99 @@ sub parse_info {
     if ($info->{'host'} !~ /:/
         && (!$ipv
             || $ipv =~ /4/
-            || ($ipv =~ /[*]/ && $info->{'host'} !~ /:/ && !eval{ require Socket6; require IO::Socket::INET6; require Socket }))) {
+            || ($ipv =~ /[*]/ && $info->{'host'} !~ /:/ && !eval{ require Socket6; require IO::Socket::INET6 }))) {
+        if (!$ipv
+            && ($info->{'host'} !~ /^\d{1,3}(\.\d{1,3}){3}$/)) {
+            $server->log(1, "NOTE: The default value for ipv will be changing to '*' in the next Net::Server release.");
+            $server->log(1, "NOTE: If you would like to continue only binding IPv4 ports and exclude IPv6 ports, you will need to add an explicit ipv => 'IPv4' to your configuration.");
+        }
         push @_info, {%$info, ipv => '4'};
     }
     if ($ipv =~ /6/ || $info->{'host'} =~ /:/) {
         push @_info, {%$info, ipv => '6'};
         $requires_ipv6++ if $proto ne 'ssl'; # IO::Socket::SSL does its own determination
-    } elsif ($ipv =~ /[*]/
-        && eval { require Socket6; require IO::Socket::INET6; require Socket }) {
-        my ($host, $port) = @$info{qw(host port)};
-        my $proto = getprotobyname(lc($info->{'proto'}) eq 'udp' ? 'udp' : 'tcp');
-        my $type  = lc($info->{'proto'}) eq 'udp' ? Socket::SOCK_DGRAM() : Socket::SOCK_STREAM();
-        my @res = Socket6::getaddrinfo($host eq '*' ? '' : $host, $port, Socket::AF_UNSPEC(), $type, $proto, Socket6::AI_PASSIVE());
-        $server->fatal("Unresolvable [$host]:$port: $res[0]") if @res < 5;
-        while (@res >= 5) {
-            my ($afam, $socktype, $proto, $saddr, $canonname) = splice @res, 0, 5;
-            my @res2 = Socket6::getnameinfo($saddr, Socket6::NI_NUMERICHOST() | Socket6::NI_NUMERICSERV());
-            $server->fatal("getnameinfo failed on [$host]:$port: $res2[0]") if @res2 < 2;
-            my ($ip, $_port) = @res2;
-            my $ipv = ($afam == Socket6::AF_INET6()) ? 6 : ($afam == Socket::AF_INET()) ? 4 : '*';
-            $server->log(2, "Resolved [$host]:$port to [$ip]:$_port, IPv$ipv");
-            push @_info, {port => $_port, host => $ip, ipv => $ipv, proto => $info->{'proto'}};
-            $requires_ipv6++ if $ipv ne '4' && $proto ne 'ssl';
-        }
-        if ((grep {$_->{'host'} eq '::'} @_info)) {
-            for (0 .. $#_info) {
-                next if $_info[$_]->{'host'} ne '0.0.0.0';
-                $server->log(2, "Removing doubly bound host [$_info[$_]->{'host'}] IPv4 because it should be handled by [::] IPv6");
-                splice @_info, $_, 1, ();
-                last;
-            }
+    } elsif ($ipv =~ /[*]/) {
+        my @rows = eval { $class->get_addr_info(@$info{qw(host port proto)}) };
+        $server->fatal($@ || "Could not find valid addresses for [$info->{'host'}]:$info->{'port'} with ipv set to '*'") if ! @rows;
+        foreach my $row (@rows) {
+            my ($host, $port, $ipv, $warn) = @$row;
+            $server->log(2, "Resolved [$info->{'host'}]:$info->{'port'} to [$host]:$port, IPv$ipv")
+                if $host ne $info->{'host'} || $port ne $info->{'port'};
+            $server->log(2, $warn) if $warn;
+            push @_info, {host => $host, port => $port, ipv => $ipv, proto => $info->{'proto'}};
+            $requires_ipv6++ if $ipv ne '4' && $proto ne 'ssl'; # we need to know if Proto::TCP needs to reparent as a child of IO::Socket::INET6
         }
     }
 
     return @_info;
+}
+
+sub get_addr_info {
+    my ($class, $host, $port, $proto) = @_;
+    $host  = '*'   if ! defined $host;
+    $port  = 0     if ! defined $port;
+    $proto = 'tcp' if ! defined $proto;
+    return ([$host, $port, '*']) if $proto =~ /UNIX/i;
+    $port = (getservbyname($port, $proto))[2] or die "Could not determine port number from host [$host]:$_[2]\n" if $port =~ /\D/;
+
+    my @info;
+    if ($host =~ /^\d+(?:\.\d+){3}$/) {
+        my $addr = Socket::inet_aton($host) or die "Unresolveable host [$host]:$port: invalid ip\n";
+        push @info, [Socket::inet_ntoa($addr), $port, 4]
+    } elsif (eval { require Socket6; require IO::Socket::INET6 }) {
+        my $proto_id = getprotobyname(lc($proto) eq 'udp' ? 'udp' : 'tcp');
+        my $socktype = lc($proto) eq 'udp' ? Socket::SOCK_DGRAM() : Socket::SOCK_STREAM();
+        my @res = Socket6::getaddrinfo($host eq '*' ? '' : $host, $port, Socket::AF_UNSPEC(), $socktype, $proto_id, Socket6::AI_PASSIVE());
+        die "Unresolveable [$host]:$port: $res[0]\n" if @res < 5;
+        while (@res >= 5) {
+            my ($afam, $socktype, $proto, $saddr, $canonname) = splice @res, 0, 5;
+            my @res2 = Socket6::getnameinfo($saddr, Socket6::NI_NUMERICHOST() | Socket6::NI_NUMERICSERV());
+            die "getnameinfo failed on [$host]:$port: $res2[0]\n" if @res2 < 2;
+            my ($ip, $port) = @res2;
+            my $ipv = ($afam == Socket6::AF_INET6()) ? 6 : ($afam == Socket::AF_INET()) ? 4 : '*';
+            push @info, [$ip, $port, $ipv];
+        }
+        my %ipv6mapped = map {$_->[0] eq '::' ? ('0.0.0.0' => $_) : $_->[0] =~ /^::ffff:(\d+(?:\.\d+){3})$/ ? ($1 => $_) : ()} @info;
+        if ((scalar(keys %ipv6mapped)
+             && grep {$ipv6mapped{$_->[0]}} @info)
+            && not my $only = $class->_bindv6only) {
+            for (my $i = 0; $i < @info; $i++) {
+                my $base = $ipv6mapped{$info[$i]->[0]} || next;
+                $base->[3] = "Not including resolved host [$info[$i]->[0]] IPv4 because it ".(length($only) ? 'will' : 'should')." be handled by [$base->[0]] IPv6";
+                splice @info, $i--, 1, ();
+            }
+        }
+    } elsif ($host =~ /:/) {
+        die "Unresolveable host [$host]:$port - could not load IO::Socket::INET6: $@";
+    } else {
+        my $addr = ($host eq '*') ? Socket::INADDR_ANY() : gethostbyname($host);
+        die "Unresolveable host [$host]:$port via IPv4 gethostbyname\n" if ! $addr;
+        push @info, [Socket::inet_ntoa($addr), $port, 4];
+    }
+
+    return @info;
+}
+
+sub _bindv6only {
+    my $class = shift;
+    my $val = $class->_sysctl('net.ipv6.bindv6only'); # linux
+    $val = $class->_sysctl('net.inet6.ip6.v6only') if ! length($val); # bsd
+    return $val;
+}
+
+sub _sysctl {
+    my ($class, $key) = @_;
+    (my $file = "/proc/sys/$key") =~ y|.|/|;
+    if (-e $file) {
+        open my $fh, "<", $file or return '';
+        my $val = <$fh> || return '';
+        chomp $val;
+        return $val;
+    } elsif (-x "/sbin/sysctl") {
+        my $val = (split /\s+/, `/sbin/sysctl -n $key`)[0];
+        return $val;
+    }
+    return '';
 }
 
 sub object {
@@ -135,7 +195,6 @@ sub requires_ipv6 {
         eval {
             require Socket6;
             require IO::Socket::INET6;
-            require Socket;
         } or $server->fatal("Port configuration using IPv6 could not be started becauses of Socket6 library issues: $@");
     }
     return 1;
@@ -150,6 +209,13 @@ __END__
 Net::Server::Proto - Net::Server Protocol compatibility layer
 
 =head1 SYNOPSIS
+
+    NOTE: beginning in Net::Server 2.005, the default value for
+          ipv will be IPv* meaning that if no host is passed, or
+          a hostname is past, all available socket types will be
+          bound.  You can force IPv4 only by adding an ipv => 4
+          configuration in any of the half dozen ways we let you
+          specify it.
 
     # Net::Server::Proto and its accompanying modules are not
     # intended to be used outside the scope of Net::Server.
@@ -168,6 +234,9 @@ Net::Server::Proto - Net::Server Protocol compatibility layer
         $default_ipv,     # default of IPv6 or IPv4 if none found in port
         $server_obj,      # Net::Server object
     );
+
+    my @raw_info = Net::Server::Proto->get_addr_info($host, $port, $proto);
+    # returns arrayref of resolved ips, ports, and ipv values
 
     my $sock = Net::Server::Proto->object({
         port  => $port,

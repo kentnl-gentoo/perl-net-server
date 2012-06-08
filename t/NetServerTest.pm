@@ -4,13 +4,23 @@ use strict;
 use IO::Socket;
 use Exporter;
 @NetServerTest::ISA = qw(Exporter);
-@NetServerTest::EXPORT_OK = qw(prepare_test ok is like use_ok skip diag);
+@NetServerTest::EXPORT_OK = qw(prepare_test client_connect ok is like use_ok skip diag);
 my %env;
 use constant debug => $ENV{'NS_DEBUG'} ? 1 : 0;
 
 END {
     warn "# number of tests ran ".($env{'_ok_n'} || 0)." did not match number of specified tests ".($env{'_ok_N'} || 0)."\n"
         if ($env{'_ok_N'} || 0) ne ($env{'_ok_n'} || 0) && ($env{'_ok_pid'} || 0) == $$;
+}
+
+sub client_connect {
+    shift if $_[0] && $_[0] eq __PACKAGE__;
+    if ($env{'ipv'} && $env{'ipv'} ne 4) {
+        require IO::Socket::INET6;
+        return IO::Socket::INET6->new(@_);
+    } else {
+        return IO::Socket::INET->new(@_);
+    }
 }
 
 # most of our tests need forking, a certain number of ports, and some pipes
@@ -24,8 +34,21 @@ sub prepare_test {
     return if $args->{'plan_only'};
 
     $env{'_ok_n'} = 0;
-    $env{'hostname'} ||= 'localhost';
     $env{'timeout'}  ||= 5;
+
+    # allow for finding a hostname that we can use in our tests that appears to be valid
+    if (!$env{'hostname'}) {
+        eval { require Net::Server::Proto } || do { SKIP: { skip("Could not load Net::Server::Proto to lookup host: $@", $N - 1) }; exit; };
+        foreach my $host (qw(localhost localhost6 localhost.localdomain * ::1)) { # try local bindings first to avoid opening external ports during testing
+            my @info = eval { Net::Server::Proto->get_addr_info($host) };
+            next if ! @info;
+            @info = sort {$a->[2] <=> $b->[2]} @info; # try IPv4 first in the name of consistency, but let IPv6 work too
+            $env{'hostname'} = $info[0]->[0];
+            $env{'ipv'}      = $info[0]->[2];
+            last;
+        }
+        die "Could not find a hostname to test connections with (tried localhost, *, ::1)" if ! $env{'hostname'};
+    }
 
     warn "# Checking can_fork\n" if debug;
     ok(can_fork(), "Can fork on this platform") || do { SKIP: { skip("Fork doesn't work on this platform", $N - 1) }; exit; };
@@ -69,16 +92,18 @@ sub get_ports {
         local $SIG{'ALRM'} = sub { die };
         alarm $env{'timeout'};
         for my $port ($start_port .. $start_port + 99){
-            my $serv = IO::Socket::INET->new(LocalAddr => $env{'hostname'},
-                                             LocalPort => $port,
-                                             Timeout   => 2,
-                                             Listen    => 1,
-                                             ReuseAddr => 1, Reuse => 1,
-                ) || do { warn "Couldn't open server socket on port $port: $!\n" if $env{'trace'}; next };
-            my $client = IO::Socket::INET->new(PeerAddr => $env{'hostname'},
-                                               PeerPort => $port,
-                                               Timeout  => 2,
-                ) || do { warn "Couldn't open client socket on port $port: $!\n" if $env{'trace'}; next };
+            my $serv = client_connect(
+                LocalAddr => $env{'hostname'},
+                LocalPort => $port,
+                Timeout   => 2,
+                Listen    => 1,
+                ReuseAddr => 1, Reuse => 1,
+            ) || do { warn "Couldn't open server socket on port $port: $!\n" if $env{'trace'}; next };
+            my $client = client_connect(
+                PeerAddr => $env{'hostname'},
+                PeerPort => $port,
+                Timeout  => 2,
+            ) || do { warn "Couldn't open client socket on port $port: $!\n" if $env{'trace'}; next };
             my $sock = $serv->accept || do { warn "Didn't accept properly on server: $!" if $env{'trace'}; next };
             $sock->autoflush(1);
             print $sock "hi from server\n";
