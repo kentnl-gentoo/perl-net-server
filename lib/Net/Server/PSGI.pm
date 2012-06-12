@@ -2,7 +2,7 @@
 #
 #  Net::Server::PSGI - Extensible Perl HTTP PSGI base server
 #
-#  $Id: PSGI.pm,v 1.6 2012/06/06 19:06:56 rhandom Exp $
+#  $Id: PSGI.pm,v 1.7 2012/06/11 21:40:09 rhandom Exp $
 #
 #  Copyright (C) 2011-2012
 #
@@ -72,7 +72,7 @@ sub process_request {
 
     if (! $ok) {
         my $err = "$@" || "Something happened";
-        $self->send_501($err);
+        $self->send_500($err);
         die $err;
     }
 }

@@ -1,5 +1,15 @@
 Revision history for Perl extension Net::Server.
 
+2.005  Jun 12 2012
+        NOTE: ipv now defaults to *
+        - Change the default of ipv from 4 to *.  This means if a host of * (default), or a named host is used, any available IPv4 OR IPv6 address will be used.
+        - Allow for explicit close_client_stdout call
+        - Add dispatch methods and app setup to HTTP
+        - Allow for exec_fork_hook in HTTP
+        - Make sure errors in HTTP use correct logging mechanisms (and do not die un-needed)
+        - Fix 500 call in PSGI
+        - Fix send_header
+
 2.004  Jun 08 2012
         NOTE: Version 2.005 will change the default ipv value to * meaning it will attempt to bind IPv4 and IPv6 if they are available if you pass a hostname
         - Add Net::Server::Proto->get_addr_info which can more reliably resolve domain information.

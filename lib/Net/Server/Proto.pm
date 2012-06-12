@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto - Net::Server Protocol compatibility layer
 #
-#  $Id: Proto.pm,v 1.26 2012/06/08 15:24:23 rhandom Exp $
+#  $Id: Proto.pm,v 1.29 2012/06/12 19:13:29 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -77,21 +77,7 @@ sub parse_info {
     $ipv = join '', @$ipv if ref($ipv) eq 'ARRAY';
     $server->fatal("Invalid ipv parameter - must contain 4, 6, or *") if $ipv && $ipv !~ /[46*]/;
     my @_info;
-    if ($info->{'host'} !~ /:/
-        && (!$ipv
-            || $ipv =~ /4/
-            || ($ipv =~ /[*]/ && $info->{'host'} !~ /:/ && !eval{ require Socket6; require IO::Socket::INET6 }))) {
-        if (!$ipv
-            && ($info->{'host'} !~ /^\d{1,3}(\.\d{1,3}){3}$/)) {
-            $server->log(1, "NOTE: The default value for ipv will be changing to '*' in the next Net::Server release.");
-            $server->log(1, "NOTE: If you would like to continue only binding IPv4 ports and exclude IPv6 ports, you will need to add an explicit ipv => 'IPv4' to your configuration.");
-        }
-        push @_info, {%$info, ipv => '4'};
-    }
-    if ($ipv =~ /6/ || $info->{'host'} =~ /:/) {
-        push @_info, {%$info, ipv => '6'};
-        $requires_ipv6++ if $proto ne 'ssl'; # IO::Socket::SSL does its own determination
-    } elsif ($ipv =~ /[*]/) {
+    if (!$ipv || $ipv =~ /[*]/) {
         my @rows = eval { $class->get_addr_info(@$info{qw(host port proto)}) };
         $server->fatal($@ || "Could not find valid addresses for [$info->{'host'}]:$info->{'port'} with ipv set to '*'") if ! @rows;
         foreach my $row (@rows) {
@@ -102,6 +88,12 @@ sub parse_info {
             push @_info, {host => $host, port => $port, ipv => $ipv, proto => $info->{'proto'}};
             $requires_ipv6++ if $ipv ne '4' && $proto ne 'ssl'; # we need to know if Proto::TCP needs to reparent as a child of IO::Socket::INET6
         }
+    } elsif ($ipv =~ /6/ || $info->{'host'} =~ /:/) {
+        push @_info, {%$info, ipv => '6'};
+        $requires_ipv6++ if $proto ne 'ssl'; # IO::Socket::SSL does its own determination
+        push @_info, {%$info, ipv => '4'} if $ipv =~ /4/ && $info->{'host'} !~ /:/;
+    } else {
+        push @_info, {%$info, ipv => '4'};
     }
 
     return @_info;
@@ -119,7 +111,7 @@ sub get_addr_info {
     if ($host =~ /^\d+(?:\.\d+){3}$/) {
         my $addr = Socket::inet_aton($host) or die "Unresolveable host [$host]:$port: invalid ip\n";
         push @info, [Socket::inet_ntoa($addr), $port, 4]
-    } elsif (eval { require Socket6; require IO::Socket::INET6 }) {
+    } elsif (!$ENV{'NO_IPV6'} && eval { require Socket6; require IO::Socket::INET6 }) {
         my $proto_id = getprotobyname(lc($proto) eq 'udp' ? 'udp' : 'tcp');
         my $socktype = lc($proto) eq 'udp' ? Socket::SOCK_DGRAM() : Socket::SOCK_STREAM();
         my @res = Socket6::getaddrinfo($host eq '*' ? '' : $host, $port, Socket::AF_UNSPEC(), $socktype, $proto_id, Socket6::AI_PASSIVE());
@@ -145,9 +137,14 @@ sub get_addr_info {
     } elsif ($host =~ /:/) {
         die "Unresolveable host [$host]:$port - could not load IO::Socket::INET6: $@";
     } else {
-        my $addr = ($host eq '*') ? Socket::INADDR_ANY() : gethostbyname($host);
-        die "Unresolveable host [$host]:$port via IPv4 gethostbyname\n" if ! $addr;
-        push @info, [Socket::inet_ntoa($addr), $port, 4];
+        my @addr;
+        if ($host eq '*') {
+            push @addr, Socket::INADDR_ANY();
+        } else {
+            (undef, undef, undef, undef, @addr) = gethostbyname($host);
+            die "Unresolveable host [$host]:$port via IPv4 gethostbyname\n" if !@addr;
+        }
+        push @info, [Socket::inet_ntoa($_), $port, 4] for @addr
     }
 
     return @info;
@@ -211,7 +208,7 @@ Net::Server::Proto - Net::Server Protocol compatibility layer
 =head1 SYNOPSIS
 
     NOTE: beginning in Net::Server 2.005, the default value for
-          ipv will be IPv* meaning that if no host is passed, or
+          ipv is IPv* meaning that if no host is passed, or
           a hostname is past, all available socket types will be
           bound.  You can force IPv4 only by adding an ipv => 4
           configuration in any of the half dozen ways we let you
@@ -242,7 +239,7 @@ Net::Server::Proto - Net::Server Protocol compatibility layer
         port  => $port,
         host  => $host,
         proto => $proto,
-        ipv   => $ipv, # 4 (IPv4) if false (default false)
+        ipv   => $ipv, # * (IPv*) if false (default false)
     }, $server);
 
     # Net::Server::Proto will attempt to interface with
@@ -260,7 +257,7 @@ Net::Server::Proto - Net::Server Protocol compatibility layer
         port  => $port,
         host  => $host,
         proto => $proto,
-        ipv   => 6, # IPv6 - default is 4 - can also be '*'
+        ipv   => 6, # IPv6 - default is * - can also be '4'
     }, $server);
 
 
@@ -378,21 +375,21 @@ a bare hostname, or a hostname with IPv* specifications.
 
     host => "::1",        # an IPv6 address
 
-    host => 'localhost',  # addresses returned by localhost (default IPv4)
+    host => 'localhost',  # addresses returned by localhost (default IPv* - IPv4 and/or IPv6)
+
+    host => 'localhost/IPv*',  # same
+
+    ipv  => '*',
+    host => 'localhost',  # same
 
     ipv  => 6,
     host => 'localhost',  # addresses returned by localhost (IPv6)
-
-    ipv  => '*',
-    host => 'localhost',  # addresses returned by localhost (any IPv6 or IPv4)
-
-    host => 'localhost/IPv*',  # same
 
     ipv  => 'IPv4 IPv6',
     host => 'localhost',  # addresses returned by localhost (requires IPv6 and IPv4)
 
 
-    host => '*',          # any local interfaces (default IPv4)
+    host => '*',          # any local interfaces (default IPv*)
 
     ipv  => '*',
     host => '*',          # any local interfaces (any IPv6 or IPv4)
@@ -411,7 +408,7 @@ or may be specified via $ENV{'IPV'}.  The order of precidence is as follows:
      4) ipv specified in proto
      5) ipv specified in default settings
      6) ipv specified in $ENV{'IPV'}
-     7) default to IPv4
+     7) default to IPv*
 
 =head1 PORT
 
@@ -429,7 +426,7 @@ a hashref (or as an array of hashrefs) of information such as:
 
     port => {
         host  => "localhost",
-        ipv   => 6, # could also pass IPv6 (4 is default)
+        ipv   => 6, # could also pass IPv6 (* is default)
         port  => 20203,
         proto => 'tcp',
     }
@@ -477,7 +474,7 @@ examples:
     #     host  => 'default-domain.com',
     #     port  => 20203,
     #     proto => 'tcp', # will use Net::Server::Proto::TCP
-    #     ipv   => 4, # IPv4
+    #     ipv   => *, # IPv*
     # };
 
     # example 2 #----------------------------------
@@ -491,7 +488,7 @@ examples:
     #     host  => 'someother.com',
     #     port  => 20203,
     #     proto => 'tcp', # will use Net::Server::Proto::TCP
-    #     ipv   => 4,
+    #     ipv   => *,
     # };
 
     # example 3 #----------------------------------
@@ -505,7 +502,7 @@ examples:
     #     host  => 'someother.com',
     #     port  => 20203,
     #     proto => 'udp', # will use Net::Server::Proto::UDP
-    #     ipv   => 4,
+    #     ipv   => *,
     # };
 
     # example 4 #----------------------------------
@@ -603,7 +600,7 @@ examples:
     #     host  => 'someother.com',
     #     port  => 20203,
     #     proto => 'ssleay', # will use Net::Server::Proto::SSLEAY
-    #     ipv   => 4,
+    #     ipv   => *,
     # };
 
     # example 11 #----------------------------------
@@ -656,7 +653,7 @@ examples:
     # example 14 #----------------------------------
 
     # depending upon your configuration
-    $port = "localhost:20203 ipv*";
+    $port = "localhost:20203";
     $def_host  = "default-domain.com";
     $def_proto = "tcp";
     $def_ipv   = undef;
@@ -696,7 +693,7 @@ examples:
     # example 16 #----------------------------------
 
     # depending upon your configuration
-    $ENV{'IPV'} = '*';
+    $ENV{'IPV'} = '4';
     $port = "localhost:20203";
     $def_host  = "default-domain.com";
     $def_proto = "tcp";
@@ -707,11 +704,6 @@ examples:
     #     port  => 20203,
     #     proto => 'tcp', # will use Net::Server::Proto::TCP
     #     ipv   => 4, # IPv4
-    # }, {
-    #     host  => '::1',
-    #     port  => 20203,
-    #     proto => 'tcp', # will use Net::Server::Proto::TCP
-    #     ipv   => 6, # IPv6
     # });
 
 =head1 LICENCE

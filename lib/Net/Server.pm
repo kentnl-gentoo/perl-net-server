@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.149 2012/06/08 17:05:12 rhandom Exp $
+#  $Id: Server.pm,v 1.151 2012/06/12 18:13:25 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -32,7 +32,7 @@ use Net::Server::Proto ();
 use Net::Server::Daemonize qw(check_pid_file create_pid_file safe_fork
                               get_uid get_gid set_uid set_gid);
 
-our $VERSION = '2.004';
+our $VERSION = '2.005';
 
 sub new {
     my $class = shift || die "Missing class";
@@ -651,6 +651,11 @@ sub post_client_connection_hook {}
 
 sub post_process_request {
     my $self = shift;
+    $self->close_client_stdout;
+}
+
+sub close_client_stdout {
+    my $self = shift;
     my $prop = $self->{'server'};
     return if $prop->{'udp_true'};
 
@@ -1081,6 +1086,8 @@ sub SYSWRITE { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'syswrite', @_) : $s-
 sub SEEK     { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'seek',     @_) : $s->[0]->seek(@_) }
 sub BINMODE  {}
 sub FILENO   {}
+sub CLOSE    { my $s = shift; $s->[1] ? $s->[1]->($s->[0], 'close',    @_) : $s->[0]->close(@_) }
+
 
 1;
 

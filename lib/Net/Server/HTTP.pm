@@ -2,7 +2,7 @@
 #
 #  Net::Server::HTTP - Extensible Perl HTTP base server
 #
-#  $Id: HTTP.pm,v 1.22 2012/06/06 19:06:32 rhandom Exp $
+#  $Id: HTTP.pm,v 1.25 2012/06/12 19:30:21 rhandom Exp $
 #
 #  Copyright (C) 2010-2012
 #
@@ -34,7 +34,7 @@ sub options {
     my $ref  = $self->SUPER::options(@_);
     my $prop = $self->{'server'};
     $ref->{$_} = \$prop->{$_} for qw(timeout_header timeout_idle server_revision max_header_size
-                                     access_log_format access_log_file);
+                                     access_log_format access_log_file enable_dispatch);
     return $ref;
 }
 
@@ -65,6 +65,13 @@ sub post_configure {
     $self->_init_access_log;
 
     $self->_tie_client_stdout;
+}
+
+sub post_bind {
+    my $self = shift;
+    $self->SUPER::post_bind(@_);
+
+    $self->_check_dispatch;
 }
 
 sub _init_access_log {
@@ -168,6 +175,56 @@ sub _tie_client_stdout {
     weaken $copy;
 }
 
+sub _check_dispatch {
+    my $self = shift;
+    if (! $self->{'server'}->{'enable_dispatch'}) {
+        return if __PACKAGE__->can('process_request') ne $self->can('process_request');
+        return if __PACKAGE__->can('process_http_request') ne $self->can('process_http_request');
+    }
+
+    my $app = $self->{'server'}->{'app'};
+    if (! $app || (ref($app) eq 'ARRAY' && !@$app)) {
+        $app = [];
+        $self->configure({app => $app});
+    }
+
+    my %dispatch;
+    my $first;
+    my @dispatch;
+    foreach my $a (ref($app) eq 'ARRAY' ? @$app : $app) {
+        next if ! $a;
+        my @pairs = ref($a) eq 'ARRAY' ? @$a
+                  : ref($a) eq 'HASH'  ? %$a
+                  : ref($a) eq 'CODE'  ? ('/', $a)
+                  : $a =~ m{^(.+?)\s+(.+)$} ? ($1, $2)
+                  : $a =~ m{^(.+?)=(.+)$}   ? ($1, $2)
+                  : ($a, $a);
+        for (my $i = 0; $i < @pairs; $i+=2) {
+            my ($key, $val) = ("/$pairs[$i]", $pairs[$i+1]);
+            $key =~ s{/\./}{/}g;
+            $key =~ s{(?:/[^/]+|)/\../}{/}g;
+            $key =~ s{//+}{/}g;
+            if ($dispatch{$key}) {
+                $self->log(2, "Already found a path matching \"$key\" - skipping.");
+                next;
+            }
+            $dispatch{$key} = $val;
+            push @dispatch, $key;
+            $first ||= $key;
+            $self->log(2, "  Dispatch: $key => $val");
+        }
+    }
+    if (@dispatch) {
+        if (! $dispatch{'/'} && $first) {
+            $dispatch{'/'} = $dispatch{$first};
+            push @dispatch, '/';
+            $self->log(2, "  Dispatch: / => $dispatch{$first} (default)");
+        }
+        $self->{'dispatch_qr'} = join "|", map {"\Q$_\E"} @dispatch;
+        $self->{'dispatch'} = \%dispatch;
+    }
+}
+
 sub http_base_headers {
     my $self = shift;
     return [
@@ -198,6 +255,8 @@ sub send_status {
         $request_info->{'response_header_size'} += length $out;
         $self->{'server'}->{'client'}->print($out);
         $request_info->{'headers_sent'} = 1;
+        $self->{'server'}->{'client'}->print($body);
+        $request_info->{'response_size'} += length $body;
     }
 }
 
@@ -244,8 +303,8 @@ sub process_request {
 
     if (! $ok) {
         my $err = "$@" || "Something happened";
+        $self->log(1, $err);
         $self->send_500($err);
-        die $err;
     }
 }
 
@@ -325,9 +384,33 @@ sub http_note {
     return $self->{'request_info'}->{'notes'}->{$key};
 }
 
+sub http_dispatch {
+    my ($self, $dispatch_qr, $dispatch_table) = @_;
+
+    $ENV{'PATH_INFO'} =~ s{^($dispatch_qr)(?=/|$|(?<=/))}{} or die "Dispatch not found\n";
+    if ($ENV{'PATH_INFO'}) {
+        $ENV{'PATH_INFO'} = "/$ENV{'PATH_INFO'}" if $ENV{'PATH_INFO'} !~ m{^/};
+        $ENV{'PATH_INFO'} =~ s/%([a-fA-F0-9]{2})/chr(hex $1)/eg;
+    }
+    $ENV{'SCRIPT_NAME'} = $1;
+    my $code = $self->{'dispatch'}->{$1};
+    return $self->$code() if ref $code;
+    $self->exec_cgi($code);
+}
+
 sub process_http_request {
     my ($self, $client) = @_;
 
+    if (my $table = $self->{'dispatch'}) {
+        my $qr = $self->{'dispatch_qr'} or die "Dispatch was not correctly setup\n";
+        return $self->http_dispatch($qr, $table)
+    }
+
+    return $self->http_echo;
+}
+
+sub http_echo {
+    my $self = shift;
     print "Content-type: text/html\n\n";
     print "<form method=post action=/bam><input type=text name=foo><input type=submit></form>\n";
     if (eval { require Data::Dumper }) {
@@ -446,12 +529,15 @@ sub http_log_constat {
 
 ###----------------------------------------------------------------###
 
+sub exec_fork_hook {}
+
 sub exec_trusted_perl {
     my ($self, $file) = @_;
     die "File $file is not executable\n" if ! -x $file;
     local $!;
     my $pid = fork;
     die "Could not spawn child process: $!\n" if ! defined $pid;
+    $self->exec_fork_hook($pid, $file);
     if (!$pid) {
         if (!eval { require $file }) {
             my $err = "$@" || "Error while running trusted perl script\n";
@@ -483,7 +569,9 @@ sub exec_cgi {
     my $in;
     my $out;
     my $err = Symbol::gensym();
-    $pid = eval { IPC::Open3::open3($in, $out, $err, $file) } or die "Could not run external script: $@";
+    local $!;
+    $pid = eval { IPC::Open3::open3($in, $out, $err, $file) } or die "Could not run external script $file: $!\n";
+    $self->exec_fork_hook($pid, $file); # won't occur for the child
     my $len = $ENV{'CONTENT_LENGTH'} || 0;
     my $s_in  = $len ? IO::Select->new($in) : undef;
     my $s_out = IO::Select->new($out, $err);
@@ -809,6 +897,25 @@ At this first release, the parent server is not tracking the child
 script which may cause issues if the script is running when a HUP is
 received.
 
+=item C<exec_fork_hook>
+
+This method is called after the fork of exec_trusted_perl and exec_cgi
+hooks.  It is passed the pid (0 if the child) and the file being ran.
+Note, that the hook will not be called from the child during exec_cgi.
+
+=item C<http_dispatch>
+
+Called if the default process_http_request and process_request methods
+have not been overridden and C<app> configuration parameters have been
+passed.  In this case this replaces the default echo server.  You can
+also enable this subsystem for your own direct use by setting
+enable_dispatch to true during configuration.  See the C<app>
+configuration item.  It will be passed a dispatch qr (regular
+expression) generated during _check_dispatch, and a dispatch table.
+The qr will be applied to path_info.  This mechanism could be used to
+augment Net::Server::HTTP with document root and virtual host
+capabilities.
+
 =back
 
 =head1 OPTIONS
@@ -851,6 +958,77 @@ the http_log_format method for more information.
 The default value is the NCSA extended/combined log format:
 
     '%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"'
+
+=item app
+
+Takes one or more items and registers them for dispatch.  Arguments
+may be supplied as an arrayref containing a location/target pairs, a
+hashref containing a location/target pairs, a bare code ref that will
+use "/" as the location and the codref as the target, a string with a space
+indicating "location target", a string containing "location=target", or
+finally a string that will be used as both location and target.  For items
+passed as an arrayref or hashref, the target may be a coderef which
+will be called and should handle the request.  In all other cases the
+target should be a valid executable suitable for passing to exec_cgi.
+
+The locations will be added in the order that they are configured.
+They will be added to a regular expression which will be applied to
+the incoming PATH_INFO string.  If the match is successful, the
+$ENV{'SCRIPT_NAME'} will be set to the matched portion and the matched
+portion will be removed from $ENV{'PATH_INFO'}.
+
+Once an app has been passed, it is necessary for the server to listen
+on /.  Therefore if "/" has not been specifically configured for
+dispatch, the first found dispatch target will also be used to handle
+"/".
+
+For convenience, if the log_level is 2 or greater, the dispatch table
+is output to the log.
+
+This mechanism is left as a generic mechanism suitable for overriding
+by servers meant to handle more complex dispatch.  At the moment there
+is no handling of virtual hosts.  At some point we will add in the
+default ability to play static content and likely for the ability to
+configure virtual hosts - or that may have to wait for a third party
+module.
+
+    app => "/home/paul/foo.cgi",
+      # Dispatch: /home/paul/foo.cgi => home/paul/foo.cgi
+      # Dispatch: / => home/paul/foo.cgi (default)
+
+
+    app => "../../foo.cgi",
+    app => "./bar.cgi",
+    app => "baz ./bar.cgi",
+    app => "bim=./bar.cgi",
+      # Dispatch: /foo.cgi => ../../foo.cgi
+      # Dispatch: /bar.cgi => ./bar.cgi
+      # Dispatch: /baz => ./bar.cgi
+      # Dispatch: /bim => ./bar.cgi
+      # Dispatch: / => ../../foo.cgi (default)
+
+
+    app => "../../foo.cgi",
+    app => "/=./bar.cgi",
+      # Dispatch: /foo.cgi => ../../foo.cgi
+      # Dispatch: / => ./bar.cgi
+
+    # you could also do this on the commandline
+    net-server HTTP app ../../foo.cgi app /=./bar.cgi
+
+    # extended options when configured from code
+
+    Net::Server::HTTP->run(app => { # loses order of matching
+      '/' => sub { ... },
+      '/foo' => sub { ... },
+      '/bar' => '/path/to/some.cgi',
+    });
+
+    Net::Server::HTTP->run(app => [
+      '/' => sub { ... },
+      '/foo' => sub { ... },
+      '/bar' => '/path/to/some.cgi',
+    ]);
 
 =back
 
