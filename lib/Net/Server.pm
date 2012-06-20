@@ -2,7 +2,7 @@
 #
 #  Net::Server - Extensible Perl internet server
 #
-#  $Id: Server.pm,v 1.151 2012/06/12 18:13:25 rhandom Exp $
+#  $Id: Server.pm,v 1.153 2012/06/20 22:44:58 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -32,7 +32,7 @@ use Net::Server::Proto ();
 use Net::Server::Daemonize qw(check_pid_file create_pid_file safe_fork
                               get_uid get_gid set_uid set_gid);
 
-our $VERSION = '2.005';
+our $VERSION = '2.006';
 
 sub new {
     my $class = shift || die "Missing class";
@@ -292,7 +292,7 @@ sub bind { # bind to the port (This should serve all but INET)
         $self->restart_open_hook;
         $self->log(2, "Binding open file descriptors");
         my %map;
-        foreach my $info (split /\n/, $ENV{'BOUND_SOCKETS'}) {
+        foreach my $info (split /\s*;\s*/, $ENV{'BOUND_SOCKETS'}) {
             my ($fd, $host, $port, $proto, $ipv, $orig) = split /\|/, $info;
             $orig = $port if ! defined $orig; # allow for things like service ports or port 0
             $fd = ($fd =~ /^(\d+)$/) ? $1 : $self->fatal("Bad file descriptor");
@@ -846,7 +846,7 @@ sub sig_hup {
         $i++;
     }
     delete $prop->{'select'}; # remove any blocking obstacle
-    $ENV{'BOUND_SOCKETS'} = join "\n", @fd;
+    $ENV{'BOUND_SOCKETS'} = join "; ", @fd;
 
     if ($prop->{'leave_children_open_on_hup'} && scalar keys %{ $prop->{'children'} }) {
         $ENV{'HUP_CHILDREN'} = join "\n", map {"$_\t$prop->{'children'}->{$_}->{'status'}"} sort keys %{ $prop->{'children'} };

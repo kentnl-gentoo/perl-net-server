@@ -2,7 +2,7 @@
 #
 #  Net::Server::HTTP - Extensible Perl HTTP base server
 #
-#  $Id: HTTP.pm,v 1.25 2012/06/12 19:30:21 rhandom Exp $
+#  $Id: HTTP.pm,v 1.26 2012/06/19 16:25:33 rhandom Exp $
 #
 #  Copyright (C) 2010-2012
 #
@@ -718,7 +718,7 @@ Used to read in the incoming headers and set the ENV.
 Called at the end of process_headers.  Initializes the contents of
 http_request_info.
 
-=item C<http_request_info
+=item C<http_request_info>
 
 Returns a hashref of information specific to the current request.
 This information will be used for logging later on.

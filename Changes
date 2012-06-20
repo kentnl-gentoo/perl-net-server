@@ -1,5 +1,10 @@
 Revision history for Perl extension Net::Server.
 
+2.006  Jun 20 2012
+        - Allow for case where host is *, and IO::Socket::INET6 is installed, but IPv6 doesn't really work.
+        - Add missing child_init_hook in Fork server (so Fork can be more parallel with PreFork in some respects)
+        - Change BOUND_SOCKETS passing to use ; as a separator rather than a \n
+
 2.005  Jun 12 2012
         NOTE: ipv now defaults to *
         - Change the default of ipv from 4 to *.  This means if a host of * (default), or a named host is used, any available IPv4 OR IPv6 address will be used.

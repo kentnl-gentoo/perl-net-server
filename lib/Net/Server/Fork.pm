@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.27 2012/05/30 15:05:37 rhandom Exp $
+#  $Id: Fork.pm,v 1.28 2012/06/19 16:16:22 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -194,8 +194,12 @@ sub run_client_connection {
 
     delete $self->{'server'}->{'children'};
 
+    $self->child_init_hook;
+
     $self->SUPER::run_client_connection;
 }
+
+sub child_init_hook {}
 
 sub close_children {
     my $self = shift;
@@ -292,6 +296,11 @@ The Fork server has the following hooks in addition to the hooks
 provided by the Net::Server base class.  See L<Net::Server>
 
 =over 4
+
+=item C<$self-E<gt>child_init_hook()>
+
+This hook is called just after the fork and after signals have been
+cleaned up.
 
 =item C<$self-E<gt>pre_accept_hook()>
 

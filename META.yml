@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Net-Server
-version:            2.005
+version:            2.006
 abstract:           Extensible, general Perl server engine
 author:
     - Paul Seamons (paul@seamons.com) and Rob Brown (bbb@cpan.org)
