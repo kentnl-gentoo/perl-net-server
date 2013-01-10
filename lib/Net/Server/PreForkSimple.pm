@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreForkSimple - Net::Server personality
 #
-#  $Id: PreForkSimple.pm,v 1.39 2012/05/30 21:43:39 rhandom Exp $
+#  $Id: PreForkSimple.pm,v 1.43 2013/01/10 07:16:02 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -66,8 +66,12 @@ sub post_bind {
     my $prop = $self->{'server'};
     $self->SUPER::post_bind;
 
-    if (! defined($prop->{'serialize'})
-        || $prop->{'serialize'} !~ /^(flock|semaphore|pipe)$/i) {
+    if ($prop->{'multi_port'} && $prop->{'serialize'} && $prop->{'serialize'} eq 'none') {
+        $self->log(2, "Passed serialize value of none is incompatible with multiple ports - using default serialize");
+        delete $prop->{'serialize'};
+    }
+    if (!$prop->{'serialize'}
+        || $prop->{'serialize'} !~ /^(flock|semaphore|pipe|none)$/i) {
         $prop->{'serialize'} = ($^O eq 'MSWin32') ? 'pipe' : 'flock';
     }
     $prop->{'serialize'} =~ tr/A-Z/a-z/;
@@ -98,7 +102,8 @@ sub post_bind {
         $prop->{'_READY'}   = $ready;
         $prop->{'_WAITING'} = $waiting;
         print $ready "First\n";
-
+    } elsif ($prop->{'serialize'} eq 'none') {
+        $self->log(3, "Using no serialization");
     } else {
         $self->fatal("Unknown serialization type \"$prop->{'serialize'}\"");
     }
@@ -134,6 +139,7 @@ sub run_n_children {
     $self->log(3, "Starting \"$n\" children");
 
     for (1 .. $n) {
+        $self->pre_fork_hook;
         local $!;
         my $pid = fork;
         $self->fatal("Bad fork [$!]") if ! defined $pid;
@@ -193,8 +199,6 @@ sub run_child {
 
 }
 
-sub child_init_hook {}
-sub child_finish_hook {}
 sub is_prefork { 1 }
 
 ### We can only let one process do the selecting at a time
@@ -225,6 +229,9 @@ sub accept {
         my $v = $self->SUPER::accept();
         print { $prop->{'_READY'} } "Next!\n";
         return $v;
+    } else {
+        my $v = $self->SUPER::accept();
+        return $v;
     }
 }
 
@@ -235,7 +242,7 @@ sub done {
     return 1 if $prop->{'done'};
     return 1 if $prop->{'requests'} >= $prop->{'max_requests'};
     return 1 if $prop->{'SigHUPed'};
-    if (! kill(0,$prop->{'ppid'})) {
+    if (! kill 0, $prop->{'ppid'}) {
         $self->log(3, "Parent process gone away. Shutting down");
         return 1;
     }
@@ -397,7 +404,8 @@ parameters.
     max_servers       \d+                     50
     max_requests      \d+                     1000
 
-    serialize         (flock|semaphore|pipe)  undef
+    serialize         (flock|semaphore
+                       |pipe|none)  undef
     # serialize defaults to flock on multi_port or on Solaris
     lock_file         "filename"              File::Temp::tempfile or POSIX::tmpnam
 
@@ -420,7 +428,7 @@ The number of client connections to receive before a child terminates.
 =item serialize
 
 Determines whether the server serializes child connections.  Options
-are undef, flock, semaphore, or pipe.  Default is undef.  On
+are undef, flock, semaphore, pipe, or none.  Default is undef.  On
 multi_port servers or on servers running on Solaris, the default is
 flock.  The flock option uses blocking exclusive flock on the file
 specified in I<lock_file> (see below).  The semaphore option uses
@@ -429,7 +437,9 @@ The pipe option reads on a pipe to choose the next.  the flock option
 should be the most bulletproof while the pipe option should be the
 most portable.  (Flock is able to reliquish the block if the process
 dies between accept on the socket and reading of the client connection
-- semaphore and pipe do not)
+- semaphore and pipe do not).  An option of none will not perform
+any serialization.  If "none" is passed and there are multiple ports
+then a the default serialization will be used insted of "none."
 
 =item lock_file
 
@@ -537,7 +547,7 @@ or other general cleanup.
 
 =item C<$self-E<gt>run_dequeue()>
 
-This hook only gets called in conjuction with the check_for_dequeue
+This hook only gets called in conjunction with the check_for_dequeue
 setting.
 
 =item C<$self-E<gt>idle_loop_hook()>

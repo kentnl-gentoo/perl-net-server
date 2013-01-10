@@ -2,7 +2,7 @@
 #
 #  Net::Server::Log::Log::Log4perl - Net::Server Logging module
 #
-#  $Id: Log4perl.pm,v 1.6 2012/06/06 03:54:26 rhandom Exp $
+#  $Id: Log4perl.pm,v 1.8 2013/01/10 06:09:34 rhandom Exp $
 #
 #  Copyright (C) 2012
 #
@@ -20,13 +20,14 @@ package Net::Server::Log::Log::Log4perl;
 
 use strict;
 use warnings;
-use Log::Log4perl;
 
 our %log4perl_map = (1 => "error", 2 => "warn", 3 => "info", 4 => "debug");
 
 sub initialize {
     my ($class, $server) = @_;
     my $prop = $server->{'server'};
+
+    require Log::Log4perl;
 
     $server->configure({
         log4perl_conf   => \$prop->{'log4perl_conf'},
@@ -81,7 +82,7 @@ system.
 
 =over 4
 
-=head1 log_file
+=item log_file
 
 To begin using Log::Log4perl logging, simply set the Net::Server
 log_file configuration parameter to "Log::Log4perl".
@@ -126,7 +127,7 @@ base class.)
 
 =head1 METHODS
 
-=over4
+=over 4
 
 =item C<initialize>
 

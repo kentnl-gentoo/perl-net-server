@@ -750,7 +750,7 @@ On my local box the following command results in the following output:
     Binding to TCP port 20203 on host 127.0.0.1 with IPv4
 
 My local box has IPv6 enabled and there are entries for localhost on
-both IPv6 ::1 and IPv4 127.0.0.1.  I could also choose to explictly
+both IPv6 ::1 and IPv4 127.0.0.1.  I could also choose to explicitly
 bind ports rather than depending upon ipv => "*" to resolve them for
 me as in the following:
 
@@ -1421,6 +1421,31 @@ that were already opened.
 This hook occurs if a server has been HUPed (restarted via the HUP
 signal.  It occurs just before restarting the server via exec.
 
+=item C<$self-E<gt>child_init_hook()>
+
+This hook is called during the forking servers.  It is also called
+during run_dequeue.  It runs just after the fork and after signals
+have been cleaned up.  If it is a dequeue process, the string
+'dequeue' will be passed as an argument.
+
+If your child processes will be needing random numbers, this
+hook is a good location to initialize srand (forked processes
+maintain the same random seed unless changed).
+
+    sub child_init_hook {
+        # from perldoc -f srand
+        srand(time ^ $$ ^ unpack "%L*", `ps axww | gzip -f`);
+    }
+
+=item C<$self-E<gt>pre_fork_hook()>
+
+Similar to the child_init_hook, but occurs just before the fork.
+
+=item C<$self-E<gt>child_finish_hook()>
+
+Similar to the child_init_hook, but ran when the forked process is
+about to finish up.
+
 =back
 
 =head1 OTHER METHODS
@@ -1553,7 +1578,7 @@ items before doing a restart.
 =head1 SHUTDOWN
 
 Each of the Fork and PreFork personalities support graceful shutdowns
-via the QUIT signal.  When a QUIT is recieved, the parent will signal
+via the QUIT signal.  When a QUIT is received, the parent will signal
 the children and then wait for them to exit.
 
 All server personalities support the normal TERM and INT signal

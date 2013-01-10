@@ -5,12 +5,17 @@ use strict;
 use FindBin qw($Bin);
 use lib $Bin;
 use NetServerTest qw(prepare_test ok use_ok diag skip);
-my $env = prepare_test({n_tests => 5, start_port => 20200, n_ports => 2}); # runs three of its own tests
+my $env = prepare_test({n_tests => 4, start_port => 20200, n_ports => 2}); # runs three of its own tests
 
 if (! eval { require File::Temp }
     || ! eval { require Net::SSLeay }
    ) {
-  SKIP: { skip("Cannot load Net::SSleay libraries to test Socket SSL server: $@", 2); };
+  SKIP: { skip("Cannot load Net::SSleay libraries to test Socket SSL server: $@", 1); };
+    exit;
+}
+if (! eval { require Net::Server::Proto::SSLEAY }) {
+    diag "Cannot load SSLEAY library on this platform: $@";
+  SKIP: { skip("Skipping tests on this platform", 1); };
     exit;
 }
 
@@ -51,7 +56,6 @@ my ($pem_fh, $pem_filename) =
 print $pem_fh $pem;
 $pem_fh->close;
 
-use_ok qw(Net::Server::Proto::SSLEAY) or exit;
 require Net::Server;
 @Net::Server::Test::ISA = qw(Net::Server);
 
@@ -89,6 +93,7 @@ sub process_request {
 my $ok = eval {
     local $SIG{'ALRM'} = sub { die "Timeout\n" };
     alarm $env->{'timeout'};
+    my $ppid = $$;
     my $pid = fork;
     die "Trouble forking: $!" if ! defined $pid;
 
@@ -145,7 +150,10 @@ my $ok = eval {
                 SSL_cert_file => $pem_filename,
                 SSL_key_file  => $pem_filename,
                 );
-        } || diag("Trouble running server: $@");
+        } || do {
+            diag("Trouble running server: $@");
+            kill(9, $ppid) && ok(0, "Failed during run of server");
+        };
         exit;
     }
     alarm(0);

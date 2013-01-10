@@ -2,7 +2,7 @@
 #
 #  Net::Server::Log::Sys::Syslog - Net::Server Logging module
 #
-#  $Id: Syslog.pm,v 1.5 2012/06/06 03:54:50 rhandom Exp $
+#  $Id: Syslog.pm,v 1.6 2013/01/10 06:10:02 rhandom Exp $
 #
 #  Copyright (C) 2012
 #
@@ -101,7 +101,7 @@ This module provides Sys::Syslog logging to the Net::Server system.
 
 =over 4
 
-=head1 log_file
+=item log_file
 
 To begin using Sys::Syslog logging, simply set the Net::Server
 log_file configuration parameter to "Sys::Syslog".

@@ -19,13 +19,16 @@ sub accept {
 my $ok = eval {
     local $SIG{'ALRM'} = sub { die "Timeout\n" };
     alarm $env->{'timeout'};
+    my $ppid = $$;
     my $pid = fork;
     die "Trouble forking: $!" if ! defined $pid;
 
     ### parent does the client
     if ($pid) {
-        $env->{'block_until_ready_to_test'}->();
+        local $SIG{'ALRM'} = sub { die "Timed out waiting for server\n" };
+        alarm $env->{'timeout'};
 
+        $env->{'block_until_ready_to_test'}->();
 
         my $remote = NetServerTest::client_connect(PeerAddr => $env->{'hostname'}, PeerPort => $env->{'ports'}->[0]) || die "Couldn't open child to sock: $!";
         my $line = <$remote>;
@@ -37,6 +40,7 @@ my $ok = eval {
         die "Didn't get the type of line we were expecting: ($line)" if $line !~ /Net::Server/;
         print $remote "exit\n";
 
+        alarm 0;
         return 1;
 
     ### child does the server
@@ -56,7 +60,10 @@ my $ok = eval {
                 background => 0,
                 setsid => 0,
             );
-        } || diag("Trouble running server: $@");
+        } || do {
+            diag("Trouble running server: $@");
+            kill(9, $ppid) && ok(0, "Failed during run of server");
+        };
         exit;
     }
     alarm(0);

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Fork - Net::Server personality
 #
-#  $Id: Fork.pm,v 1.28 2012/06/19 16:16:22 rhandom Exp $
+#  $Id: Fork.pm,v 1.31 2013/01/10 07:17:21 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -197,9 +197,9 @@ sub run_client_connection {
     $self->child_init_hook;
 
     $self->SUPER::run_client_connection;
-}
 
-sub child_init_hook {}
+    $self->child_finish_hook;
+}
 
 sub close_children {
     my $self = shift;
@@ -217,8 +217,6 @@ sub close_children {
                  TTOU => 'DEFAULT',
                  );
 }
-
-sub pre_fork_hook {}
 
 1;
 
@@ -297,18 +295,9 @@ provided by the Net::Server base class.  See L<Net::Server>
 
 =over 4
 
-=item C<$self-E<gt>child_init_hook()>
-
-This hook is called just after the fork and after signals have been
-cleaned up.
-
 =item C<$self-E<gt>pre_accept_hook()>
 
 This hook occurs just before the accept is called.
-
-=item C<$self-E<gt>pre_fork_hook()>
-
-This hook occurs just after accept but before the fork.
 
 =item C<$self-E<gt>post_accept_hook()>
 
@@ -316,7 +305,7 @@ This hook occurs in the child after the accept and fork.
 
 =item C<$self-E<gt>run_dequeue()>
 
-This hook only gets called in conjuction with the check_for_dequeue
+This hook only gets called in conjunction with the check_for_dequeue
 setting.
 
 =back

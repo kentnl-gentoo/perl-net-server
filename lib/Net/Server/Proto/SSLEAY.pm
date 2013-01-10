@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSLEAY - Net::Server Protocol module
 #
-#  $Id: SSLEAY.pm,v 1.23 2012/05/30 21:22:57 rhandom Exp $
+#  $Id: SSLEAY.pm,v 1.26 2013/01/10 06:41:29 rhandom Exp $
 #
 #  Copyright (C) 2010-2012
 #
@@ -34,6 +34,7 @@ BEGIN {
     for my $sub (qw(load_error_strings SSLeay_add_ssl_algorithms ENGINE_load_builtin_engines ENGINE_register_all_complete randomize)) {
         Net::SSLeay->can($sub)->();
     }
+    eval { [Fcntl::F_GETFL(), Fcntl::F_SETFL(), Fcntl::O_NONBLOCK()] } || die "Could not access Fcntl constant while loading ".__PACKAGE__.": $@";
 }
 
 our @ISA = qw(IO::Socket::INET);
@@ -78,6 +79,7 @@ sub object {
         $sock->NS_listen(defined($info->{'listen'}) ? $info->{'listen'}
                         : defined($server->{'server'}->{'listen'}) ? $server->{'server'}->{'listen'}
                         : Socket::SOMAXCONN());
+        ${*$sock}{'NS_orig_port'} = $info->{'orig_port'} if defined $info->{'orig_port'};
 
         for my $key (@ssl_args) {
             my $val = defined($info->{$key}) ? $info->{$key}

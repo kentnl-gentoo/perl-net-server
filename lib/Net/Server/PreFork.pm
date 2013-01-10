@@ -2,7 +2,7 @@
 #
 #  Net::Server::PreFork - Net::Server personality
 #
-#  $Id: PreFork.pm,v 1.44 2012/05/30 15:03:27 rhandom Exp $
+#  $Id: PreFork.pm,v 1.46 2013/01/10 07:16:20 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -160,6 +160,7 @@ sub run_n_children {
             ($parentsock, $childsock) = IO::Socket::UNIX->socketpair(IO::Socket::AF_UNIX, IO::Socket::SOCK_STREAM, IO::Socket::PF_UNSPEC);
         }
 
+        $self->pre_fork_hook;
         local $!;
         my $pid = fork;
         if (! defined $pid) {
@@ -508,7 +509,8 @@ You really should also see L<Net::Server::PreForkSimple>.
     max_servers         \d+                     50
     max_requests        \d+                     1000
 
-    serialize           (flock|semaphore|pipe)  undef
+    serialize           (flock|semaphore
+                         |pipe|none)            undef
     # serialize defaults to flock on multi_port or on Solaris
     lock_file           "filename"              File::Temp::tempfile or POSIX::tmpnam
 
@@ -564,6 +566,10 @@ $self->{'server'}->{'parent_sock'}.  The parent will be notified
 through child_is_talking_hook where the first argument is the socket
 to the child.  The child's socket is stored in
 $self->{'server'}->{'children'}->{$child_pid}->{'sock'}.
+
+=item serialize
+
+See the documentation under L<Net::Server::PreForkSimple>.
 
 =back
 

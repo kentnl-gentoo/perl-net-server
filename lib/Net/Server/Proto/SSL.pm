@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #
-#  $Id: SSL.pm,v 1.24 2012/05/29 21:20:24 rhandom Exp $
+#  $Id: SSL.pm,v 1.25 2013/01/10 05:43:14 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -71,6 +71,7 @@ sub object {
         $sock->NS_listen(defined($info->{'listen'}) ? $info->{'listen'}
                         : defined($server->{'server'}->{'listen'}) ? $server->{'server'}->{'listen'}
                         : Socket::SOMAXCONN());
+        ${*$sock}{'NS_orig_port'} = $info->{'orig_port'} if defined $info->{'orig_port'};
 
         my %seen;
         for my $key (grep {!$seen{$_}++} (@ssl_args, sort grep {/^SSL_/} keys %$info)) { # allow for any SSL_ arg to get passed in via 

@@ -2,7 +2,7 @@
 #
 #  Net::Server::SIG - Safer signals
 #
-#  $Id: SIG.pm,v 1.7 2012/05/29 22:52:22 rhandom Exp $
+#  $Id: SIG.pm,v 1.8 2013/01/10 06:11:41 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -149,7 +149,7 @@ script located in the examples directory of this distribution.
 
 Takes key/value pairs where the key is the signal name, and the
 argument is either a code ref, or the words 'DEFAULT' or 'IGNORE'.
-The function register_sig must be used in conjuction with check_sigs,
+The function register_sig must be used in conjunction with check_sigs,
 and with a blocking select() function call -- otherwise, you will
 observe the registered signal mysteriously vanish.
 

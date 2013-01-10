@@ -2,7 +2,7 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.20 2012/05/29 16:00:30 rhandom Exp $
+#  $Id: Multiplex.pm,v 1.23 2013/01/10 06:10:36 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -186,6 +186,8 @@ sub new {
     }, $package;
     return $self;
 }
+
+sub log { shift->{net_server}->log(@_) }
 
 # This subroutine is only used by the listen callback object.
 sub mux_connection {
@@ -433,7 +435,7 @@ The other Net::Server hooks and methods should work the same.
 
 =item C<$self-E<gt>run_dequeue()>
 
-This hook only gets called in conjuction with the check_for_dequeue
+This hook only gets called in conjunction with the check_for_dequeue
 setting.  It will run every check_for_dequeue seconds.  Since no
 forking is done, this hook should run fast in order to prevent
 blocking the rest of the processing.
@@ -451,7 +453,7 @@ $self->{net_server}->{mux}->set_timeout($fh, $seconds_from_now);
 
 $fh may be either a client socket or a listen socket file descriptor
 within the mux.  $seconds_from_now may be fractional to achieve more
-precise timeouts.  This is used in conjuction with mux_timeout, which
+precise timeouts.  This is used in conjunction with mux_timeout, which
 you should define yourself.
 
 =head2 mux_timeout

@@ -2,7 +2,7 @@
 #
 #  Net::Server::HTTP - Extensible Perl HTTP base server
 #
-#  $Id: HTTP.pm,v 1.26 2012/06/19 16:25:33 rhandom Exp $
+#  $Id: HTTP.pm,v 1.30 2013/01/10 07:31:33 rhandom Exp $
 #
 #  Copyright (C) 2010-2012
 #
@@ -136,7 +136,7 @@ sub _tie_client_stdout {
         while ($headers->{'unparsed'} =~ s/^(.*?)\015?\012//) {
             my $line = $1;
 
-            if (!$headers && $line =~ m{^HTTP/(1.[01]) \s+ (\d+) (?: | \s+ .+)$ }x) {
+            if (!$headers->{'parsed'} && $line =~ m{^HTTP/(1.[01]) \s+ (\d+) (?: | \s+ .+)$ }x) {
                 $headers->{'status'} = [];
                 $headers->{'parsed'} .= "$line\015\012";
                 $prop->{'request_info'}->{'http_version'} = $1;
@@ -148,11 +148,11 @@ sub _tie_client_stdout {
                 $copy->send_status(@$s) if @$s;
                 $client->print($headers->{'parsed'}."\015\012");
                 $request_info->{'headers_sent'} = 1;
-                $request_info->{'response_header_size'} += length($headers->{'parsed'}+2);
+                $request_info->{'response_header_size'} += length($headers->{'parsed'})+2;
                 $request_info->{'response_size'} = length($headers->{'unparsed'});
                 return $client->print($headers->{'unparsed'});
             } elsif ($line !~ s/^(\w+(?:-(?:\w+))*):\s*//) {
-                my $invalid = ($line =~ /(.{0,40})/) ? "$1..." : '';
+                my $invalid = ($line =~ /(.{0,120})/) ? "$1..." : '';
                 $invalid =~ s/</&lt;/g;
                 die "Premature end of script headers: $invalid<br>\n";
             } else {
@@ -290,12 +290,14 @@ sub process_request {
     my $client = shift || $self->{'server'}->{'client'};
 
     my $ok = eval {
-        local $SIG{'ALRM'} = sub { die "Server Timeout\n" };
+        local $SIG{'ALRM'} = sub { die "Server Timeout on headers\n" };
         alarm($self->timeout_header);
         $self->process_headers($client);
 
+        $SIG{'ALRM'} = sub { die "Server Timeout on process\n" };
         alarm($self->timeout_idle);
         $self->process_http_request($client);
+
         alarm(0);
         1;
     };
@@ -324,8 +326,9 @@ sub process_headers {
     die "Could not parse http headers successfully\n" if $ok != 1;
 
     my ($req, @lines) = split /\r?\n/, $headers;
+    die "Missing request\n" if ! defined $req;
 
-    if ($req !~ m{ ^\s*(GET|POST|PUT|DELETE|PUSH|HEAD|OPTIONS)\s+(.+)\s+HTTP/1\.[01]\s*$ }ix) {
+    if (!defined($req) || $req !~ m{ ^\s*(GET|POST|PUT|DELETE|PUSH|HEAD|OPTIONS)\s+(.+)\s+HTTP/1\.[01]\s*$ }ix) {
         die "Invalid request\n";
     }
     $ENV{'REQUEST_METHOD'} = uc $1;
@@ -388,11 +391,11 @@ sub http_dispatch {
     my ($self, $dispatch_qr, $dispatch_table) = @_;
 
     $ENV{'PATH_INFO'} =~ s{^($dispatch_qr)(?=/|$|(?<=/))}{} or die "Dispatch not found\n";
+    $ENV{'SCRIPT_NAME'} = $1;
     if ($ENV{'PATH_INFO'}) {
         $ENV{'PATH_INFO'} = "/$ENV{'PATH_INFO'}" if $ENV{'PATH_INFO'} !~ m{^/};
         $ENV{'PATH_INFO'} =~ s/%([a-fA-F0-9]{2})/chr(hex $1)/eg;
     }
-    $ENV{'SCRIPT_NAME'} = $1;
     my $code = $self->{'dispatch'}->{$1};
     return $self->$code() if ref $code;
     $self->exec_cgi($code);
@@ -424,6 +427,7 @@ sub http_echo {
 sub post_process_request {
     my $self = shift;
     my $info = $self->{'request_info'};
+    $info->{'begin'} = time unless defined $info->{'begin'};
     $info->{'elapsed'} = time - $info->{'begin'};
     $self->SUPER::post_process_request(@_);
     $self->log_http_request($info);
@@ -537,7 +541,7 @@ sub exec_trusted_perl {
     local $!;
     my $pid = fork;
     die "Could not spawn child process: $!\n" if ! defined $pid;
-    $self->exec_fork_hook($pid, $file);
+    $self->exec_fork_hook($pid, $file, 1);
     if (!$pid) {
         if (!eval { require $file }) {
             my $err = "$@" || "Error while running trusted perl script\n";
@@ -947,7 +951,7 @@ request is closed.
 
 Defaults to undef.  If true, this represents the location of where
 the access log should be written to.  If a special value of STDERR
-is passed, the access log entry will be writting to the same location
+is passed, the access log entry will be writing to the same location
 as the ERROR log.
 
 =item access_log_format

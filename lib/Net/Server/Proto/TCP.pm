@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #
-#  $Id: TCP.pm,v 1.25 2012/05/29 21:28:54 rhandom Exp $
+#  $Id: TCP.pm,v 1.28 2013/01/10 06:11:27 rhandom Exp $
 #
 #  Copyright (C) 2001-2012
 #
@@ -48,6 +48,7 @@ sub object {
         $sock->NS_listen(defined($info->{'listen'}) ? $info->{'listen'}
                         : defined($server->{'server'}->{'listen'}) ? $server->{'server'}->{'listen'}
                         : Socket::SOMAXCONN());
+        ${*$sock}{'NS_orig_port'} = $info->{'orig_port'} if defined $info->{'orig_port'};
     }
     return wantarray ? @sock : $sock[0];
 }
@@ -113,7 +114,7 @@ sub accept {
     if (defined $client) {
         $client->NS_port($sock->NS_port);
     }
-    return $client;
+    return wantarray ? ($client, $peername) : $client;
 }
 
 sub poll_cb { # implemented for psgi compatibility - TODO - should poll appropriately for Multipex
@@ -225,6 +226,8 @@ Basic dumper of properties stored in the glob.
 =item C<AUTOLOAD>
 
 Handle accessor methods.
+
+=back
 
 =head1 LICENCE
 
