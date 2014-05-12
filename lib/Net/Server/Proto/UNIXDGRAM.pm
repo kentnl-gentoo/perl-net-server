@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::UNIXDGRAM - Net::Server Protocol module
 #
-#  $Id: UNIXDGRAM.pm,v 1.3 2012/05/29 23:21:32 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

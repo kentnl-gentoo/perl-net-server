@@ -2,7 +2,7 @@
 #
 #  Net::Server::PSGI - Extensible Perl HTTP PSGI base server
 #
-#  $Id: PSGI.pm,v 1.7 2012/06/11 21:40:09 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2011-2012
 #
@@ -96,7 +96,12 @@ sub find_psgi_handler { shift->app || \&psgi_echo_handler }
 sub app {
     my $self = shift;
     $self->{'server'}->{'app'} = shift if @_;
-    return $self->{'server'}->{'app'};
+    my $app = $self->{'server'}->{'app'};
+    if (!ref($app) && $app) {
+        $app = $self->{'server'}->{'app'} = eval { require CGI::Compile; CGI::Compile->compile($app) }
+            || die "Failed to compile app with CGI::Compile";
+    }
+    return $app;
 }
 
 sub print_psgi_headers {

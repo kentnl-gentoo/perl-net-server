@@ -2,7 +2,7 @@
 #
 #  Net::Server::Single - Net::Server personality
 #
-#  $Id: Single.pm,v 1.6 2012/05/29 22:53:00 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::UDP - Net::Server Protocol module
 #
-#  $Id: UDP.pm,v 1.27 2013/01/10 05:44:03 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

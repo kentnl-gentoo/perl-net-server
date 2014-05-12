@@ -2,7 +2,7 @@
 #
 #  Net::Server::MultiType - Net::Server personality
 #
-#  $Id: MultiType.pm,v 1.16 2012/06/05 22:43:05 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

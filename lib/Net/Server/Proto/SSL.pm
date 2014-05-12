@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSL - Net::Server Protocol module
 #
-#  $Id: SSL.pm,v 1.25 2013/01/10 05:43:14 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

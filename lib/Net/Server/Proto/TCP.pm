@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::TCP - Net::Server Protocol module
 #
-#  $Id: TCP.pm,v 1.28 2013/01/10 06:11:27 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

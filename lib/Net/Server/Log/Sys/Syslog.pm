@@ -2,7 +2,7 @@
 #
 #  Net::Server::Log::Sys::Syslog - Net::Server Logging module
 #
-#  $Id: Syslog.pm,v 1.6 2013/01/10 06:10:02 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2012
 #

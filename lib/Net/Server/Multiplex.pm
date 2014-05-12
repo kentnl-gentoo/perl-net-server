@@ -2,7 +2,7 @@
 #
 #  Net::Server::Multiplex - Net::Server personality
 #
-#  $Id: Multiplex.pm,v 1.23 2013/01/10 06:10:36 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

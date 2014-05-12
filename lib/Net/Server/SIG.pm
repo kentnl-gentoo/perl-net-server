@@ -2,7 +2,7 @@
 #
 #  Net::Server::SIG - Safer signals
 #
-#  $Id: SIG.pm,v 1.8 2013/01/10 06:11:41 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #
@@ -55,7 +55,7 @@ sub register_sig {
     } elsif ($ref eq 'CODE') {
         $_SIG{$sig} = 0;
         $_SIG_SUB{$sig} = $code_ref;
-        $SIG{$sig} = sub{ $Net::Server::SIG::_SIG{$_[0]} = 1; };
+        $SIG{$sig} = sub{ $Net::Server::SIG::_SIG{$sig} = 1 };
     } else {
         die "Unsupported sig type -- must be 'DEFAULT' or a code ref.";
     }

@@ -2,7 +2,7 @@
 #
 #  Net::Server::Log::Log::Log4perl - Net::Server Logging module
 #
-#  $Id: Log4perl.pm,v 1.8 2013/01/10 06:09:34 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2012
 #

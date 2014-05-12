@@ -2,7 +2,7 @@
 #
 #  Net::Server::INET - Net::Server personality
 #
-#  $Id: INET.pm,v 1.14 2012/06/07 13:12:34 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

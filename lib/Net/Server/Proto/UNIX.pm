@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::UNIX - Net::Server Protocol module
 #
-#  $Id: UNIX.pm,v 1.17 2012/06/06 14:07:31 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #

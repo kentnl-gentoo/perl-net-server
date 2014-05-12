@@ -2,7 +2,7 @@
 #
 #  Net::Server::Proto::SSLEAY - Net::Server Protocol module
 #
-#  $Id: SSLEAY.pm,v 1.26 2013/01/10 06:41:29 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2010-2012
 #

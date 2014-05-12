@@ -2,7 +2,7 @@
 #
 #  Net::Server::Daemonize - Daemonization utilities.
 #
-#  $Id: Daemonize.pm,v 1.21 2012/05/29 16:09:10 rhandom Exp $
+#  $Id$
 #
 #  Copyright (C) 2001-2012
 #
