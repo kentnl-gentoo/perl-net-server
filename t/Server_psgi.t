@@ -5,16 +5,20 @@ use strict;
 use FindBin qw($Bin);
 use lib $Bin;
 use NetServerTest qw(prepare_test ok use_ok diag);
-my $env = prepare_test({n_tests => 5, start_port => 20600, n_ports => 2}); # runs three of its own tests
+my $env = prepare_test({n_tests => 5, start_port => 20208, n_ports => 1}); # runs three of its own tests
 
-use_ok('Net::Server::PreFork');
-@Net::Server::Test::ISA = qw(Net::Server::PreFork);
+use_ok('Net::Server::PSGI');
+@Net::Server::Test::ISA = qw(Net::Server::PSGI);
 
 
 sub accept {
+    my $self = shift;
+    exit if $^O eq 'MSWin32' && $self->{'__one_accept_only'}++;
     $env->{'signal_ready_to_test'}->();
-    return shift->SUPER::accept(@_);
+    return $self->SUPER::accept(@_);
 }
+
+sub done { 1 } # force exit after first request
 
 my $ok = eval {
     local $SIG{'ALRM'} = sub { die "Timeout\n" };
@@ -25,22 +29,16 @@ my $ok = eval {
 
     ### parent does the client
     if ($pid) {
-        local $SIG{'ALRM'} = sub { die "Timed out waiting for server\n" };
-        alarm $env->{'timeout'};
-
         $env->{'block_until_ready_to_test'}->();
 
         my $remote = NetServerTest::client_connect(PeerAddr => $env->{'hostname'}, PeerPort => $env->{'ports'}->[0]) || die "Couldn't open child to sock: $!";
-        my $line = <$remote>;
-        die "Didn't get the type of line we were expecting: ($line)" if $line !~ /Net::Server/;
-        print $remote "quit\n";
 
-        $remote = NetServerTest::client_connect(PeerAddr => $env->{'hostname'}, PeerPort => $env->{'ports'}->[1]) || die "Couldn't open child to sock: $!";
-        $line = <$remote>;
-        die "Didn't get the type of line we were expecting: ($line)" if $line !~ /Net::Server/;
-        print $remote "exit\n";
+        print $remote "GET / HTTP/1.0\nFoo: bar\n\n";
 
-        alarm 0;
+        ### sample a line
+        my @lines = <$remote>;
+        print map {s/\s*$//; "# $_\n"} @lines;
+        die "Didn't get a correct http response: ($lines[0])" if !@lines || $lines[0] !~ m{^HTTP/1.0};
         return 1;
 
     ### child does the server
@@ -50,13 +48,9 @@ my $ok = eval {
             close STDERR;
             Net::Server::Test->run(
                 port => $env->{'ports'}->[0],
-                port => "$env->{'hostname'}:$env->{'ports'}->[1]",
                 host => $env->{'hostname'},
                 ipv  => $env->{'ipv'},
-                min_servers  => 1,
-                min_spare_servers => 0,
-                max_requests => 2,
-                child_communication => 1,
+                server_type => 'Single',
                 background => 0,
                 setsid => 0,
             );
@@ -64,6 +58,7 @@ my $ok = eval {
             diag("Trouble running server: $@");
             kill(9, $ppid) && ok(0, "Failed during run of server");
         };
+        alarm(0);
         exit;
     }
     alarm(0);
